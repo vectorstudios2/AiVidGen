@@ -5,6 +5,13 @@ from pathlib import Path
 import gradio as gr
 import torch
 import torchaudio
+import os
+
+try:
+    import mmaudio
+except ImportError:
+    os.system("pip install -e .")
+    import mmaudio
 
 from mmaudio.eval_utils import (ModelConfig, all_model_cfg, generate, load_video, make_video,
                                 setup_eval_logging)
