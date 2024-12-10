@@ -54,9 +54,6 @@ def get_model() -> tuple[MMAudio, FeaturesUtils, SequenceConfig]:
 
 
 net, feature_utils, seq_cfg = get_model()
-net.preprocess_conditions = torch.compile(net.preprocess_conditions)
-net.predict_flow = torch.compile(net.predict_flow)
-feature_utils.compile()
 
 
 @spaces.GPU
