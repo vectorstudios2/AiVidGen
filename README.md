@@ -1,8 +1,8 @@
 ---
 title: MMAudio — generating synchronized audio from video/text
 emoji: 🔊
-colorFrom: yellow
-colorTo: orange
+colorFrom: blue
+colorTo: indigo
 sdk: gradio
 app_file: app.py
 pinned: false
