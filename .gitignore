@@ -2,16 +2,16 @@ run_*.sh
 log/
 saves
 saves/
-weights/
-weights
 output/
 output
 pretrained/
 workspace
 workspace/
-ext_weights/
-ext_weights
 .checkpoints/
+weights/
+ext_weights/
+*.pth
+*.pt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
