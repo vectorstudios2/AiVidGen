@@ -20,6 +20,7 @@ from mmaudio.model.flow_matching import FlowMatching
 from mmaudio.model.networks import MMAudio, get_my_mmaudio
 from mmaudio.model.sequence_config import SequenceConfig
 from mmaudio.model.utils.features_utils import FeaturesUtils
+import tempfile
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -81,18 +82,18 @@ def video_to_audio(video: gr.Video, prompt: str, negative_prompt: str, seed: int
                       cfg_strength=cfg_strength)
     audio = audios.float().cpu()[0]
 
-    current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir.mkdir(exist_ok=True, parents=True)
-    video_save_path = output_dir / f'{current_time_string}.mp4'
-    make_video(video,
-               video_save_path,
-               audio,
-               sampling_rate=seq_cfg.sampling_rate,
-               duration_sec=seq_cfg.duration)
+    # current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
+    video_save_path = tempfile.mktemp(suffix='.mp4')
+    # output_dir.mkdir(exist_ok=True, parents=True)
+    # video_save_path = output_dir / f'{current_time_string}.mp4'
+    # make_video(video,
+    #            video_save_path,
+    #            audio,
+    #            sampling_rate=seq_cfg.sampling_rate,
+    #            duration_sec=seq_cfg.duration)
     return video_save_path
 
 
-@spaces.GPU
 @torch.inference_mode()
 def text_to_audio(prompt: str, negative_prompt: str, seed: int, num_steps: int, cfg_strength: float,
                   duration: float):
@@ -115,9 +116,10 @@ def text_to_audio(prompt: str, negative_prompt: str, seed: int, num_steps: int, 
                       cfg_strength=cfg_strength)
     audio = audios.float().cpu()[0]
 
-    current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir.mkdir(exist_ok=True, parents=True)
-    audio_save_path = output_dir / f'{current_time_string}.flac'
+    # current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # output_dir.mkdir(exist_ok=True, parents=True)
+    # audio_save_path = output_dir / f'{current_time_string}.flac'
+    audio_save_path = tempfile.mktemp(suffix='.flac')
     torchaudio.save(audio_save_path, audio, seq_cfg.sampling_rate)
     return audio_save_path
 
