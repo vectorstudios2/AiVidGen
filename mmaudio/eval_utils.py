@@ -7,6 +7,7 @@ import torch
 from colorlog import ColoredFormatter
 from torchvision.transforms import v2
 from torio.io import StreamingMediaDecoder, StreamingMediaEncoder
+import av
 
 from mmaudio.model.flow_matching import FlowMatching
 from mmaudio.model.networks import MMAudio
@@ -169,11 +170,13 @@ def load_video(video_path: Path, duration_sec: float) -> tuple[torch.Tensor, tor
     reader = StreamingMediaDecoder(video_path)
     reader.add_basic_video_stream(
         frames_per_chunk=int(_CLIP_FPS * duration_sec),
+        buffer_chunk_size=1,
         frame_rate=_CLIP_FPS,
         format='rgb24',
     )
     reader.add_basic_video_stream(
         frames_per_chunk=int(_SYNC_FPS * duration_sec),
+        buffer_chunk_size=1,
         frame_rate=_SYNC_FPS,
         format='rgb24',
     )
@@ -182,8 +185,13 @@ def load_video(video_path: Path, duration_sec: float) -> tuple[torch.Tensor, tor
     data_chunk = reader.pop_chunks()
     clip_chunk = data_chunk[0]
     sync_chunk = data_chunk[1]
+    print('clip', clip_chunk.shape, clip_chunk.dtype, clip_chunk.max())
+    print('sync', sync_chunk.shape, sync_chunk.dtype, sync_chunk.max())
     assert clip_chunk is not None
     assert sync_chunk is not None
+
+    for i in range(reader.num_out_streams):
+        print(reader.get_out_stream_info(i))
 
     clip_frames = clip_transform(clip_chunk)
     sync_frames = sync_transform(sync_chunk)
@@ -210,17 +218,26 @@ def load_video(video_path: Path, duration_sec: float) -> tuple[torch.Tensor, tor
 def make_video(video_path: Path, output_path: Path, audio: torch.Tensor, sampling_rate: int,
                duration_sec: float):
 
+    av_video = av.open(video_path)
+    frame_rate = av_video.streams.video[0].guessed_rate
+    print('av frame rate', frame_rate)
+
     approx_max_length = int(duration_sec * 60)
     reader = StreamingMediaDecoder(video_path)
     reader.add_basic_video_stream(
         frames_per_chunk=approx_max_length,
+        buffer_chunk_size=1,
         format='rgb24',
     )
     reader.fill_buffer()
     video_chunk = reader.pop_chunks()[0]
+    print(video_chunk.shape, video_chunk.dtype, video_chunk.max())
     assert video_chunk is not None
 
-    fps = int(reader.get_out_stream_info(0).frame_rate)
+    # fps = int(reader.get_out_stream_info(0).frame_rate)
+    fps = frame_rate
+    for i in range(reader.num_out_streams):
+        print(reader.get_out_stream_info(i))
     if fps > 60:
         log.warning(f'This code supports only up to 60 fps, but the video has {fps} fps')
         log.warning(f'Just change the *60 above me')

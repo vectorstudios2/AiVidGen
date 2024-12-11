@@ -1,6 +1,6 @@
-torch >= 2.5.1
-torchaudio
+torch == 2.4.0
 torchvision
+torchaudio
 python-dotenv
 cython
 gitpython >= 3.1
@@ -24,3 +24,4 @@ tensordict
 colorlog
 open_clip_torch
 soundfile
+av

@@ -83,14 +83,15 @@ def video_to_audio(video: gr.Video, prompt: str, negative_prompt: str, seed: int
     audio = audios.float().cpu()[0]
 
     # current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
-    video_save_path = tempfile.mktemp(suffix='.mp4')
+    video_save_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
     # output_dir.mkdir(exist_ok=True, parents=True)
     # video_save_path = output_dir / f'{current_time_string}.mp4'
-    # make_video(video,
-    #            video_save_path,
-    #            audio,
-    #            sampling_rate=seq_cfg.sampling_rate,
-    #            duration_sec=seq_cfg.duration)
+    make_video(video,
+               video_save_path,
+               audio,
+               sampling_rate=seq_cfg.sampling_rate,
+               duration_sec=seq_cfg.duration)
+    log.info(f'Saved video to {video_save_path}')
     return video_save_path
 
 
@@ -116,11 +117,9 @@ def text_to_audio(prompt: str, negative_prompt: str, seed: int, num_steps: int, 
                       cfg_strength=cfg_strength)
     audio = audios.float().cpu()[0]
 
-    # current_time_string = datetime.now().strftime('%Y%m%d_%H%M%S')
-    # output_dir.mkdir(exist_ok=True, parents=True)
-    # audio_save_path = output_dir / f'{current_time_string}.flac'
-    audio_save_path = tempfile.mktemp(suffix='.flac')
+    audio_save_path = tempfile.NamedTemporaryFile(delete=False, suffix='.flac').name
     torchaudio.save(audio_save_path, audio, seq_cfg.sampling_rate)
+    log.info(f'Saved audio to {audio_save_path}')
     return audio_save_path
 
 
@@ -140,8 +139,8 @@ video_to_audio_tab = gr.Interface(
     title='MMAudio — Video-to-Audio Synthesis',
     examples=[
         [
-            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_nyc.mp4',
-            '',
+            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_beach.mp4',
+            'waves, seagulls',
             '',
             0,
             25,
@@ -185,8 +184,8 @@ video_to_audio_tab = gr.Interface(
             10,
         ],
         [
-            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_beach.mp4',
-            'waves, seagulls',
+            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_kraken.mp4',
+            'waves, storm',
             '',
             0,
             25,
@@ -194,8 +193,8 @@ video_to_audio_tab = gr.Interface(
             10,
         ],
         [
-            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_kraken.mp4',
-            'waves, storm',
+            'https://huggingface.co/hkchengrex/MMAudio/resolve/main/examples/sora_nyc.mp4',
+            '',
             '',
             0,
             25,
