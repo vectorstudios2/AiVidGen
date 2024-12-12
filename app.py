@@ -95,6 +95,7 @@ def video_to_audio(video: gr.Video, prompt: str, negative_prompt: str, seed: int
     return video_save_path
 
 
+@spaces.GPU
 @torch.inference_mode()
 def text_to_audio(prompt: str, negative_prompt: str, seed: int, num_steps: int, cfg_strength: float,
                   duration: float):
