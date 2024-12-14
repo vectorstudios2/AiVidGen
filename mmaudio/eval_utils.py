@@ -76,29 +76,37 @@ all_model_cfg: dict[str, ModelConfig] = {
 }
 
 
-def generate(clip_video: Optional[torch.Tensor],
-             sync_video: Optional[torch.Tensor],
-             text: Optional[list[str]],
-             *,
-             negative_text: Optional[list[str]] = None,
-             feature_utils: FeaturesUtils,
-             net: MMAudio,
-             fm: FlowMatching,
-             rng: torch.Generator,
-             cfg_strength: float):
+def generate(
+    clip_video: Optional[torch.Tensor],
+    sync_video: Optional[torch.Tensor],
+    text: Optional[list[str]],
+    *,
+    negative_text: Optional[list[str]] = None,
+    feature_utils: FeaturesUtils,
+    net: MMAudio,
+    fm: FlowMatching,
+    rng: torch.Generator,
+    cfg_strength: float,
+    clip_batch_size_multiplier: int = 40,
+    sync_batch_size_multiplier: int = 40,
+) -> torch.Tensor:
     device = feature_utils.device
     dtype = feature_utils.dtype
 
     bs = len(text)
     if clip_video is not None:
         clip_video = clip_video.to(device, dtype, non_blocking=True)
-        clip_features = feature_utils.encode_video_with_clip(clip_video, batch_size=bs)
+        clip_features = feature_utils.encode_video_with_clip(clip_video,
+                                                             batch_size=bs *
+                                                             clip_batch_size_multiplier)
     else:
         clip_features = net.get_empty_clip_sequence(bs)
 
     if sync_video is not None:
         sync_video = sync_video.to(device, dtype, non_blocking=True)
-        sync_features = feature_utils.encode_video_with_sync(sync_video, batch_size=bs)
+        sync_features = feature_utils.encode_video_with_sync(sync_video,
+                                                             batch_size=bs *
+                                                             sync_batch_size_multiplier)
     else:
         sync_features = net.get_empty_sync_sequence(bs)
 
@@ -185,13 +193,8 @@ def load_video(video_path: Path, duration_sec: float) -> tuple[torch.Tensor, tor
     data_chunk = reader.pop_chunks()
     clip_chunk = data_chunk[0]
     sync_chunk = data_chunk[1]
-    print('clip', clip_chunk.shape, clip_chunk.dtype, clip_chunk.max())
-    print('sync', sync_chunk.shape, sync_chunk.dtype, sync_chunk.max())
     assert clip_chunk is not None
     assert sync_chunk is not None
-
-    for i in range(reader.num_out_streams):
-        print(reader.get_out_stream_info(i))
 
     clip_frames = clip_transform(clip_chunk)
     sync_frames = sync_transform(sync_chunk)
