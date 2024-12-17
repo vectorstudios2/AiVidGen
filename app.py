@@ -130,7 +130,8 @@ video_to_audio_tab = gr.Interface(
     Project page: <a href="https://hkchengrex.com/MMAudio/">https://hkchengrex.com/MMAudio/</a><br>
     Code: <a href="https://github.com/hkchengrex/MMAudio">https://github.com/hkchengrex/MMAudio</a><br>
 
-    NOTE: It takes longer to process high-resolution videos (>384 px on the shorter side) and does not improve results.
+    NOTE: It takes longer to process high-resolution videos (>384 px on the shorter side). 
+    Doing so does not improve results.
     """,
     inputs=[
         gr.Video(),
