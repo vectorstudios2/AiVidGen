@@ -138,6 +138,8 @@ video_to_audio_tab = gr.Interface(
 
     NOTE: It takes longer to process high-resolution videos (>384 px on the shorter side). 
     Doing so does not improve results.
+
+    The model has been trained on 8-second videos. Using much longer or shorter videos will degrade performance. Around 5s~12s should be fine.
     """,
     inputs=[
         gr.Video(),
