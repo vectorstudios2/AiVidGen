@@ -137,7 +137,9 @@ video_to_audio_tab = gr.Interface(
     Code: <a href="https://github.com/hkchengrex/MMAudio">https://github.com/hkchengrex/MMAudio</a><br>
 
     Ho Kei Cheng, Masato Ishii, Akio Hayakawa, Takashi Shibuya, Alexander Schwing, Yuki Mitsufuji
+    
     University of Illinois Urbana-Champaign, Sony AI, and Sony Group Corporation
+    
     CVPR 2025
 
     NOTE: It takes longer to process high-resolution videos (>384 px on the shorter side). 
