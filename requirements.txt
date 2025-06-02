@@ -25,3 +25,12 @@ colorlog
 open_clip_torch
 soundfile
 av
+
+git+https://github.com/huggingface/diffusers.git
+transformers
+accelerate
+sentencepiece
+peft
+ftfy
+imageio-ffmpeg
+opencv-python
