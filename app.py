@@ -12,6 +12,7 @@ import random
 import logging
 import torchaudio
 import os
+import gc
 
 # MMAudio imports
 try:
@@ -20,12 +21,28 @@ except ImportError:
     os.system("pip install -e .")
     import mmaudio
 
+# Set environment variables for better memory management
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
+os.environ['HF_HUB_CACHE'] = '/tmp/hub'  # Use temp directory to avoid filling persistent storage
+
 from mmaudio.eval_utils import (ModelConfig, all_model_cfg, generate, load_video, make_video,
                                 setup_eval_logging)
 from mmaudio.model.flow_matching import FlowMatching
 from mmaudio.model.networks import MMAudio, get_my_mmaudio
 from mmaudio.model.sequence_config import SequenceConfig
 from mmaudio.model.utils.features_utils import FeaturesUtils
+
+# Clean up temp files periodically
+def cleanup_temp_files():
+    """Clean up temporary files to save storage"""
+    temp_dir = tempfile.gettempdir()
+    for filename in os.listdir(temp_dir):
+        filepath = os.path.join(temp_dir, filename)
+        try:
+            if filename.endswith(('.mp4', '.flac', '.wav')):
+                os.remove(filepath)
+        except:
+            pass
 
 # Video generation model setup
 MODEL_ID = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
@@ -53,26 +70,39 @@ log = logging.getLogger()
 device = 'cuda'
 dtype = torch.bfloat16
 
-audio_model: ModelConfig = all_model_cfg['large_44k_v2']
-audio_model.download_if_needed()
-setup_eval_logging()
+# Global variables for audio model (loaded on demand)
+audio_model = None
+audio_net = None
+audio_feature_utils = None
+audio_seq_cfg = None
 
-def get_audio_model() -> tuple[MMAudio, FeaturesUtils, SequenceConfig]:
-    seq_cfg = audio_model.seq_cfg
-    net: MMAudio = get_my_mmaudio(audio_model.model_name).to(device, dtype).eval()
-    net.load_weights(torch.load(audio_model.model_path, map_location=device, weights_only=True))
-    log.info(f'Loaded weights from {audio_model.model_path}')
+def load_audio_model():
+    """Load audio model on demand to save storage"""
+    global audio_model, audio_net, audio_feature_utils, audio_seq_cfg
+    
+    if audio_net is None:
+        audio_model = all_model_cfg['small_16k']  # Use smaller model
+        audio_model.download_if_needed()
+        setup_eval_logging()
+        
+        seq_cfg = audio_model.seq_cfg
+        net = get_my_mmaudio(audio_model.model_name).to(device, dtype).eval()
+        net.load_weights(torch.load(audio_model.model_path, map_location=device, weights_only=True))
+        log.info(f'Loaded weights from {audio_model.model_path}')
 
-    feature_utils = FeaturesUtils(tod_vae_ckpt=audio_model.vae_path,
-                                  synchformer_ckpt=audio_model.synchformer_ckpt,
-                                  enable_conditions=True,
-                                  mode=audio_model.mode,
-                                  bigvgan_vocoder_ckpt=audio_model.bigvgan_16k_path,
-                                  need_vae_encoder=False)
-    feature_utils = feature_utils.to(device, dtype).eval()
-    return net, feature_utils, seq_cfg
-
-audio_net, audio_feature_utils, audio_seq_cfg = get_audio_model()
+        feature_utils = FeaturesUtils(tod_vae_ckpt=audio_model.vae_path,
+                                      synchformer_ckpt=audio_model.synchformer_ckpt,
+                                      enable_conditions=True,
+                                      mode=audio_model.mode,
+                                      bigvgan_vocoder_ckpt=audio_model.bigvgan_16k_path,
+                                      need_vae_encoder=False)
+        feature_utils = feature_utils.to(device, dtype).eval()
+        
+        audio_net = net
+        audio_feature_utils = feature_utils
+        audio_seq_cfg = seq_cfg
+    
+    return audio_net, audio_feature_utils, audio_seq_cfg
 
 # Constants
 MOD_VALUE = 32
@@ -292,6 +322,13 @@ def handle_image_upload_for_dims_wan(uploaded_pil_image, current_h_val, current_
         gr.Warning("Error attempting to calculate new dimensions")
         return gr.update(value=DEFAULT_H_SLIDER_VALUE), gr.update(value=DEFAULT_W_SLIDER_VALUE)
 
+def clear_cache():
+    """Clear GPU and CPU cache to free memory"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    gc.collect()
+
 def get_duration(input_image, prompt, height, width, 
                    negative_prompt, duration_seconds,
                    guidance_scale, steps,
@@ -315,6 +352,9 @@ def get_duration(input_image, prompt, height, width,
 def add_audio_to_video(video_path, duration_sec, audio_prompt, audio_negative_prompt, 
                       audio_seed, audio_steps, audio_cfg_strength):
     """Add audio to video using MMAudio"""
+    # Load audio model on demand
+    net, feature_utils, seq_cfg = load_audio_model()
+    
     rng = torch.Generator(device=device)
     if audio_seed >= 0:
         rng.manual_seed(audio_seed)
@@ -327,14 +367,14 @@ def add_audio_to_video(video_path, duration_sec, audio_prompt, audio_negative_pr
     clip_frames = video_info.clip_frames.unsqueeze(0)
     sync_frames = video_info.sync_frames.unsqueeze(0)
     duration = video_info.duration_sec
-    audio_seq_cfg.duration = duration
-    audio_net.update_seq_lengths(audio_seq_cfg.latent_seq_len, audio_seq_cfg.clip_seq_len, audio_seq_cfg.sync_seq_len)
+    seq_cfg.duration = duration
+    net.update_seq_lengths(seq_cfg.latent_seq_len, seq_cfg.clip_seq_len, seq_cfg.sync_seq_len)
     
     audios = generate(clip_frames,
                       sync_frames, [audio_prompt],
                       negative_text=[audio_negative_prompt],
-                      feature_utils=audio_feature_utils,
-                      net=audio_net,
+                      feature_utils=feature_utils,
+                      net=net,
                       fm=fm,
                       rng=rng,
                       cfg_strength=audio_cfg_strength)
@@ -342,7 +382,7 @@ def add_audio_to_video(video_path, duration_sec, audio_prompt, audio_negative_pr
     
     # Save video with audio
     video_with_audio_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
-    make_video(video_info, video_with_audio_path, audio, sampling_rate=audio_seq_cfg.sampling_rate)
+    make_video(video_info, video_with_audio_path, audio, sampling_rate=seq_cfg.sampling_rate)
     
     return video_with_audio_path
 
@@ -390,6 +430,10 @@ def generate_video(input_image, prompt, height, width,
             audio_prompt, audio_negative_prompt,
             audio_seed, audio_steps, audio_cfg_strength
         )
+    
+    # Clear cache to free memory
+    clear_cache()
+    cleanup_temp_files()  # Clean up temp files
     
     return video_path, video_with_audio_path, current_seed
 
