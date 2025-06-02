@@ -444,6 +444,18 @@ def update_audio_visibility(audio_mode):
 with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_classes=["main-container"]):
         gr.Markdown("# ✨ Fast 4 steps Wan 2.1 I2V (14B) with CausVid LoRA + Audio")
+
+        # Add badges side by side
+        gr.HTML("""
+        <div class="badge-container">
+            <a href="https://huggingface.co/spaces/Heartsync/wan2-1-fast-security" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=FAST%20%26%20Furios&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
+            </a>
+            <a href="https://huggingface.co/spaces/Heartsync/WAN-VIDEO-AUDIO" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=VIDEO%20%26%20AUDIO&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
+            </a>
+        </div>
+        """)
         
         with gr.Row():
             with gr.Column(elem_classes=["input-container"]):
