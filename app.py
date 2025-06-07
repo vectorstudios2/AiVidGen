@@ -106,8 +106,8 @@ def load_audio_model():
 
 # Constants
 MOD_VALUE = 32
-DEFAULT_H_SLIDER_VALUE = 512
-DEFAULT_W_SLIDER_VALUE = 896
+DEFAULT_H_SLIDER_VALUE = 320
+DEFAULT_W_SLIDER_VALUE = 560
 NEW_FORMULA_MAX_AREA = 480.0 * 832.0 
 
 SLIDER_MIN_H, SLIDER_MAX_H = 128, 896
@@ -116,7 +116,7 @@ MAX_SEED = np.iinfo(np.int32).max
 
 FIXED_FPS = 24
 MIN_FRAMES_MODEL = 8
-MAX_FRAMES_MODEL = 81 
+MAX_FRAMES_MODEL = 120
 
 default_prompt_i2v = "make this image come alive, cinematic motion, smooth animation"
 default_negative_prompt = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards, watermark, text, signature"
