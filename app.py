@@ -448,11 +448,14 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
         # Add badges side by side
         gr.HTML("""
         <div class="badge-container">
+            <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=BASE&message=WAN%202.1%20T2V-FusioniX&color=%23008080&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="Base Model">
+            </a>
+            <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX2" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=BASE&message=WAN%202.1%20T2V-Fusioni2X&color=%23008080&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="Base Model">
+            </a>            
             <a href="https://huggingface.co/spaces/Heartsync/wan2-1-fast-security" target="_blank">
                 <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=FAST%20%26%20Furios&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
-            </a>
-            <a href="https://huggingface.co/spaces/Heartsync/WAN-VIDEO-AUDIO" target="_blank">
-                <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=VIDEO%20%26%20AUDIO&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
             </a>
         </div>
         """)
