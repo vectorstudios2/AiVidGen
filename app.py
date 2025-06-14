@@ -625,10 +625,10 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
         with gr.Column():
             gr.Examples(
                 examples=[ 
-                    ["peng.png", "a penguin playfully dancing in the snow, Antarctica", 896, 512, 
+                    ["peng.png", "a penguin playfully dancing in the snow, Antarctica", 896, 896, 
                      default_negative_prompt, 2, 1.0, 4, 42, False, 
                      "Video Only", "", default_audio_negative_prompt, -1, 25, 4.5],
-                    ["forg.jpg", "the frog jumps around", 448, 832,
+                    ["forg.jpg", "the frog jumps around", 832, 832,
                      default_negative_prompt, 2, 1.0, 4, 42, False,
                      "Enable Audio", "frog croaking, water splashing", default_audio_negative_prompt, -1, 25, 4.5],
                 ],
