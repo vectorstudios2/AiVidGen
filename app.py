@@ -1,13 +1,12 @@
+import types
 import torch
-from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, UniPCMultistepScheduler
+from diffusers import AutoencoderKLWan, UniPCMultistepScheduler
 from diffusers.utils import export_to_video
-from transformers import CLIPVisionModel
 import gradio as gr
 import tempfile
 import spaces
 from huggingface_hub import hf_hub_download
 import numpy as np
-from PIL import Image
 import random
 import logging
 import torchaudio
@@ -23,7 +22,7 @@ except ImportError:
 
 # Set environment variables for better memory management
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
-os.environ['HF_HUB_CACHE'] = '/tmp/hub'  # Use temp directory to avoid filling persistent storage
+os.environ['HF_HUB_CACHE'] = '/tmp/hub'
 
 from mmaudio.eval_utils import (ModelConfig, all_model_cfg, generate, load_video, make_video,
                                 setup_eval_logging)
@@ -31,6 +30,10 @@ from mmaudio.model.flow_matching import FlowMatching
 from mmaudio.model.networks import MMAudio, get_my_mmaudio
 from mmaudio.model.sequence_config import SequenceConfig
 from mmaudio.model.utils.features_utils import FeaturesUtils
+
+# NAG imports
+from src.pipeline_wan_nag import NAGWanPipeline
+from src.transformer_wan_nag import NagWanTransformer3DModel
 
 # Clean up temp files periodically
 def cleanup_temp_files():
@@ -44,23 +47,23 @@ def cleanup_temp_files():
         except:
             pass
 
-# Video generation model setup
-MODEL_ID = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
-LORA_REPO_ID = "Kijai/WanVideo_comfy"
-LORA_FILENAME = "Wan21_CausVid_14B_T2V_lora_rank32.safetensors"
+# Video generation model setup (NAG)
+MODEL_ID = "Wan-AI/Wan2.1-T2V-14B-Diffusers"
+SUB_MODEL_ID = "vrgamedevgirl84/Wan14BT2VFusioniX"
+SUB_MODEL_FILENAME = "Wan14BT2VFusioniX_fp16_.safetensors"
 
-image_encoder = CLIPVisionModel.from_pretrained(MODEL_ID, subfolder="image_encoder", torch_dtype=torch.float32)
 vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32)
-pipe = WanImageToVideoPipeline.from_pretrained(
-    MODEL_ID, vae=vae, image_encoder=image_encoder, torch_dtype=torch.bfloat16
+wan_path = hf_hub_download(repo_id=SUB_MODEL_ID, filename=SUB_MODEL_FILENAME)
+transformer = NagWanTransformer3DModel.from_single_file(wan_path, torch_dtype=torch.bfloat16)
+pipe = NAGWanPipeline.from_pretrained(
+    MODEL_ID, vae=vae, transformer=transformer, torch_dtype=torch.bfloat16
 )
-pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=8.0)
+pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=5.0)
 pipe.to("cuda")
 
-causvid_path = hf_hub_download(repo_id=LORA_REPO_ID, filename=LORA_FILENAME)
-pipe.load_lora_weights(causvid_path, adapter_name="causvid_lora")
-pipe.set_adapters(["causvid_lora"], adapter_weights=[0.95])
-pipe.fuse_lora()
+pipe.transformer.__class__.attn_processors = NagWanTransformer3DModel.attn_processors
+pipe.transformer.__class__.set_attn_processor = NagWanTransformer3DModel.set_attn_processor
+pipe.transformer.__class__.forward = NagWanTransformer3DModel.forward
 
 # Audio generation model setup
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -81,7 +84,7 @@ def load_audio_model():
     global audio_model, audio_net, audio_feature_utils, audio_seq_cfg
     
     if audio_net is None:
-        audio_model = all_model_cfg['small_16k']  # Use smaller model
+        audio_model = all_model_cfg['small_16k']
         audio_model.download_if_needed()
         setup_eval_logging()
         
@@ -106,20 +109,22 @@ def load_audio_model():
 
 # Constants
 MOD_VALUE = 32
-DEFAULT_H_SLIDER_VALUE = 320
-DEFAULT_W_SLIDER_VALUE = 560
-NEW_FORMULA_MAX_AREA = 480.0 * 832.0 
+DEFAULT_DURATION_SECONDS = 4
+DEFAULT_STEPS = 4
+DEFAULT_SEED = 2025
+DEFAULT_H_SLIDER_VALUE = 480
+DEFAULT_W_SLIDER_VALUE = 832
+NEW_FORMULA_MAX_AREA = 480.0 * 832.0
 
 SLIDER_MIN_H, SLIDER_MAX_H = 128, 896
 SLIDER_MIN_W, SLIDER_MAX_W = 128, 896
 MAX_SEED = np.iinfo(np.int32).max
 
-FIXED_FPS = 24
+FIXED_FPS = 16
 MIN_FRAMES_MODEL = 8
-MAX_FRAMES_MODEL = 120
+MAX_FRAMES_MODEL = 129
 
-default_prompt_i2v = "make this image come alive, cinematic motion, smooth animation"
-default_negative_prompt = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards, watermark, text, signature"
+DEFAULT_NAG_NEGATIVE_PROMPT = "Static, motionless, still, ugly, bad quality, worst quality, poorly drawn, low resolution, blurry, lack of details"
 default_audio_prompt = ""
 default_audio_negative_prompt = "music"
 
@@ -243,19 +248,6 @@ label {
     margin-bottom: 5px !important;
 }
 
-/* 이미지 업로드 영역 */
-.image-upload {
-    border: 2px dashed rgba(255, 255, 255, 0.3) !important;
-    border-radius: 15px !important;
-    background: rgba(255, 255, 255, 0.05) !important;
-    transition: all 0.3s ease !important;
-}
-
-.image-upload:hover {
-    border-color: rgba(255, 255, 255, 0.5) !important;
-    background: rgba(255, 255, 255, 0.1) !important;
-}
-
 /* 비디오 출력 영역 */
 video {
     border-radius: 15px !important;
@@ -287,41 +279,6 @@ input[type="radio"] {
 }
 """
 
-def _calculate_new_dimensions_wan(pil_image, mod_val, calculation_max_area,
-                                 min_slider_h, max_slider_h,
-                                 min_slider_w, max_slider_w,
-                                 default_h, default_w):
-    orig_w, orig_h = pil_image.size
-    if orig_w <= 0 or orig_h <= 0:
-        return default_h, default_w
-
-    aspect_ratio = orig_h / orig_w
-    
-    calc_h = round(np.sqrt(calculation_max_area * aspect_ratio))
-    calc_w = round(np.sqrt(calculation_max_area / aspect_ratio))
-
-    calc_h = max(mod_val, (calc_h // mod_val) * mod_val)
-    calc_w = max(mod_val, (calc_w // mod_val) * mod_val)
-    
-    new_h = int(np.clip(calc_h, min_slider_h, (max_slider_h // mod_val) * mod_val))
-    new_w = int(np.clip(calc_w, min_slider_w, (max_slider_w // mod_val) * mod_val))
-    
-    return new_h, new_w
-
-def handle_image_upload_for_dims_wan(uploaded_pil_image, current_h_val, current_w_val):
-    if uploaded_pil_image is None:
-        return gr.update(value=DEFAULT_H_SLIDER_VALUE), gr.update(value=DEFAULT_W_SLIDER_VALUE)
-    try:
-        new_h, new_w = _calculate_new_dimensions_wan(
-            uploaded_pil_image, MOD_VALUE, NEW_FORMULA_MAX_AREA,
-            SLIDER_MIN_H, SLIDER_MAX_H, SLIDER_MIN_W, SLIDER_MAX_W,
-            DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE
-        )
-        return gr.update(value=new_h), gr.update(value=new_w)
-    except Exception as e:
-        gr.Warning("Error attempting to calculate new dimensions")
-        return gr.update(value=DEFAULT_H_SLIDER_VALUE), gr.update(value=DEFAULT_W_SLIDER_VALUE)
-
 def clear_cache():
     """Clear GPU and CPU cache to free memory"""
     if torch.cuda.is_available():
@@ -329,18 +286,13 @@ def clear_cache():
         torch.cuda.synchronize()
     gc.collect()
 
-def get_duration(input_image, prompt, height, width, 
-                   negative_prompt, duration_seconds,
-                   guidance_scale, steps,
-                   seed, randomize_seed,
-                   audio_mode, audio_prompt, audio_negative_prompt,
-                   audio_seed, audio_steps, audio_cfg_strength,
-                   progress):
-    base_duration = 60
-    if steps > 4 and duration_seconds > 2:
-        base_duration = 90
-    elif steps > 4 or duration_seconds > 2:
-        base_duration = 75
+def get_duration(prompt, nag_negative_prompt, nag_scale,
+                height, width, duration_seconds,
+                steps, seed, randomize_seed,
+                audio_mode, audio_prompt, audio_negative_prompt,
+                audio_seed, audio_steps, audio_cfg_strength,
+                progress):
+    base_duration = int(duration_seconds) * int(steps) * 2.25 + 5
     
     # Add extra time for audio generation
     if audio_mode == "Enable Audio":
@@ -387,39 +339,38 @@ def add_audio_to_video(video_path, duration_sec, audio_prompt, audio_negative_pr
     return video_with_audio_path
 
 @spaces.GPU(duration=get_duration)
-def generate_video(input_image, prompt, height, width, 
-                   negative_prompt, duration_seconds,
-                   guidance_scale, steps,
-                   seed, randomize_seed,
+def generate_video(prompt, nag_negative_prompt, nag_scale,
+                   height, width, duration_seconds,
+                   steps, seed, randomize_seed,
                    audio_mode, audio_prompt, audio_negative_prompt,
                    audio_seed, audio_steps, audio_cfg_strength,
                    progress=gr.Progress(track_tqdm=True)):
     
-    if input_image is None:
-        raise gr.Error("Please upload an input image.")
-
     target_h = max(MOD_VALUE, (int(height) // MOD_VALUE) * MOD_VALUE)
     target_w = max(MOD_VALUE, (int(width) // MOD_VALUE) * MOD_VALUE)
     
-    num_frames = np.clip(int(round(duration_seconds * FIXED_FPS)), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
+    num_frames = np.clip(int(round(int(duration_seconds) * FIXED_FPS) + 1), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
     
     current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
 
-    resized_image = input_image.resize((target_w, target_h))
-
-    # Generate video
+    # Generate video using NAG
     with torch.inference_mode():
-        output_frames_list = pipe(
-            image=resized_image, prompt=prompt, negative_prompt=negative_prompt,
+        nag_output_frames_list = pipe(
+            prompt=prompt,
+            nag_negative_prompt=nag_negative_prompt,
+            nag_scale=nag_scale,
+            nag_tau=3.5,
+            nag_alpha=0.5,
             height=target_h, width=target_w, num_frames=num_frames,
-            guidance_scale=float(guidance_scale), num_inference_steps=int(steps),
+            guidance_scale=0.,
+            num_inference_steps=int(steps),
             generator=torch.Generator(device="cuda").manual_seed(current_seed)
         ).frames[0]
 
     # Save video without audio
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
         video_path = tmpfile.name
-    export_to_video(output_frames_list, video_path, fps=FIXED_FPS)
+    export_to_video(nag_output_frames_list, video_path, fps=FIXED_FPS)
     
     # Generate audio if enabled
     video_with_audio_path = None
@@ -433,7 +384,7 @@ def generate_video(input_image, prompt, height, width,
     
     # Clear cache to free memory
     clear_cache()
-    cleanup_temp_files()  # Clean up temp files
+    cleanup_temp_files()
     
     return video_path, video_with_audio_path, current_seed
 
@@ -443,9 +394,9 @@ def update_audio_visibility(audio_mode):
 
 with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_classes=["main-container"]):
-        gr.Markdown("# ✨ Fast 4 steps Wan 2.1 I2V (14B) with CausVid LoRA + Audio")
+        gr.Markdown("# ✨ Fast NAG T2V (14B) with Audio Generation")
 
-        # Add badges side by side
+        # Add badges
         gr.HTML("""
         <div class="badge-container">
             <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX" target="_blank">
@@ -453,31 +404,39 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
             </a>
             <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX2" target="_blank">
                 <img src="https://img.shields.io/static/v1?label=BASE&message=WAN%202.1%20T2V-Fusioni2X&color=%23008080&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="Base Model">
-            </a>            
-            <a href="https://huggingface.co/spaces/Heartsync/wan2-1-fast-security" target="_blank">
-                <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=FAST%20%26%20Furios&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
             </a>
         </div>
         """)
         
         with gr.Row():
             with gr.Column(elem_classes=["input-container"]):
-                input_image_component = gr.Image(
-                    type="pil", 
-                    label="🖼️ Input Image (auto-resized to target H/W)",
-                    elem_classes=["image-upload"]
-                )
                 prompt_input = gr.Textbox(
-                    label="✏️ Prompt", 
-                    value=default_prompt_i2v,
-                    lines=2
+                    label="✏️ Video Prompt",
+                    placeholder="Describe your video scene in detail...",
+                    lines=3
                 )
+                
+                with gr.Accordion("🎨 NAG Settings", open=False):
+                    nag_negative_prompt = gr.Textbox(
+                        label="❌ NAG Negative Prompt",
+                        value=DEFAULT_NAG_NEGATIVE_PROMPT,
+                        lines=2
+                    )
+                    nag_scale = gr.Slider(
+                        label="🎯 NAG Scale",
+                        minimum=1.0,
+                        maximum=20.0,
+                        step=0.25,
+                        value=11.0,
+                        info="Higher values = stronger guidance"
+                    )
+                
                 duration_seconds_input = gr.Slider(
-                    minimum=round(MIN_FRAMES_MODEL/FIXED_FPS,1), 
-                    maximum=round(MAX_FRAMES_MODEL/FIXED_FPS,1), 
-                    step=0.1, 
-                    value=2, 
-                    label="⏱️ Duration (seconds)", 
+                    minimum=1,
+                    maximum=8,
+                    step=1,
+                    value=DEFAULT_DURATION_SECONDS,
+                    label="⏱️ Duration (seconds)",
                     info=f"Clamped to model's {MIN_FRAMES_MODEL}-{MAX_FRAMES_MODEL} frames at {FIXED_FPS}fps."
                 )
                 
@@ -525,65 +484,53 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
                         )
                 
                 with gr.Accordion("⚙️ Advanced Settings", open=False):
-                    negative_prompt_input = gr.Textbox(
-                        label="❌ Negative Prompt", 
-                        value=default_negative_prompt, 
-                        lines=3
-                    )
-                    seed_input = gr.Slider(
-                        label="🎲 Seed", 
-                        minimum=0, 
-                        maximum=MAX_SEED, 
-                        step=1, 
-                        value=42, 
-                        interactive=True
-                    )
-                    randomize_seed_checkbox = gr.Checkbox(
-                        label="🔀 Randomize seed", 
-                        value=True, 
-                        interactive=True
-                    )
                     with gr.Row():
                         height_input = gr.Slider(
-                            minimum=SLIDER_MIN_H, 
-                            maximum=SLIDER_MAX_H, 
-                            step=MOD_VALUE, 
-                            value=DEFAULT_H_SLIDER_VALUE, 
-                            label=f"📏 Output Height (multiple of {MOD_VALUE})"
+                            minimum=SLIDER_MIN_H,
+                            maximum=SLIDER_MAX_H,
+                            step=MOD_VALUE,
+                            value=DEFAULT_H_SLIDER_VALUE,
+                            label=f"📏 Output Height (×{MOD_VALUE})"
                         )
                         width_input = gr.Slider(
-                            minimum=SLIDER_MIN_W, 
-                            maximum=SLIDER_MAX_W, 
-                            step=MOD_VALUE, 
-                            value=DEFAULT_W_SLIDER_VALUE, 
-                            label=f"📐 Output Width (multiple of {MOD_VALUE})"
+                            minimum=SLIDER_MIN_W,
+                            maximum=SLIDER_MAX_W,
+                            step=MOD_VALUE,
+                            value=DEFAULT_W_SLIDER_VALUE,
+                            label=f"📐 Output Width (×{MOD_VALUE})"
                         )
-                    steps_slider = gr.Slider(
-                        minimum=1, 
-                        maximum=30, 
-                        step=1, 
-                        value=4, 
-                        label="🚀 Inference Steps"
-                    ) 
-                    guidance_scale_input = gr.Slider(
-                        minimum=0.0, 
-                        maximum=20.0, 
-                        step=0.5, 
-                        value=1.0, 
-                        label="🎯 Guidance Scale", 
-                        visible=False
+                    with gr.Row():
+                        steps_slider = gr.Slider(
+                            minimum=1,
+                            maximum=8,
+                            step=1,
+                            value=DEFAULT_STEPS,
+                            label="🚀 Inference Steps"
+                        )
+                        seed_input = gr.Slider(
+                            label="🎲 Seed",
+                            minimum=0,
+                            maximum=MAX_SEED,
+                            step=1,
+                            value=DEFAULT_SEED,
+                            interactive=True
+                        )
+                    randomize_seed_checkbox = gr.Checkbox(
+                        label="🔀 Randomize seed",
+                        value=True,
+                        interactive=True
                     )
 
                 generate_button = gr.Button(
-                    "🎬 Generate Video", 
+                    "🎬 Generate Video",
                     variant="primary",
                     elem_classes=["generate-btn"]
                 )
                 
             with gr.Column(elem_classes=["output-container"]):
                 video_output = gr.Video(
-                    label="🎥 Generated Video", 
-                    autoplay=True, 
+                    label="🎥 Generated Video",
+                    autoplay=True,
                     interactive=False
                 )
                 video_with_audio_output = gr.Video(
@@ -600,44 +547,38 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft()) as demo:
             outputs=[audio_settings, video_with_audio_output]
         )
         
-        input_image_component.upload(
-            fn=handle_image_upload_for_dims_wan,
-            inputs=[input_image_component, height_input, width_input],
-            outputs=[height_input, width_input]
-        )
-        
-        input_image_component.clear( 
-            fn=handle_image_upload_for_dims_wan,
-            inputs=[input_image_component, height_input, width_input],
-            outputs=[height_input, width_input]
-        )
-        
         ui_inputs = [
-            input_image_component, prompt_input, height_input, width_input,
-            negative_prompt_input, duration_seconds_input,
-            guidance_scale_input, steps_slider, seed_input, randomize_seed_checkbox,
+            prompt_input, nag_negative_prompt, nag_scale,
+            height_input, width_input, duration_seconds_input,
+            steps_slider, seed_input, randomize_seed_checkbox,
             audio_mode, audio_prompt, audio_negative_prompt,
             audio_seed, audio_steps, audio_cfg_strength
         ]
         generate_button.click(
-            fn=generate_video, 
-            inputs=ui_inputs, 
+            fn=generate_video,
+            inputs=ui_inputs,
             outputs=[video_output, video_with_audio_output, seed_input]
         )
 
         with gr.Column():
             gr.Examples(
-                examples=[ 
-                    ["peng.png", "a penguin playfully dancing in the snow, Antarctica", 896, 896, 
-                     default_negative_prompt, 2, 1.0, 4, 42, False, 
+                examples=[
+                    ["A ginger cat passionately plays electric guitar with intensity and emotion on a stage. The background is shrouded in deep darkness. Spotlights cast dramatic shadows.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
+                     DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
+                     DEFAULT_STEPS, DEFAULT_SEED, False,
+                     "Enable Audio", "electric guitar riffs, cat meowing", default_audio_negative_prompt, -1, 25, 4.5],
+                    ["A red vintage Porsche convertible flying over a rugged coastal cliff. Monstrous waves violently crashing against the rocks below. A lighthouse stands tall atop the cliff.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
+                     DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
+                     DEFAULT_STEPS, DEFAULT_SEED, False,
+                     "Enable Audio", "car engine, ocean waves crashing, wind", default_audio_negative_prompt, -1, 25, 4.5],
+                    ["Enormous glowing jellyfish float slowly across a sky filled with soft clouds. Their tentacles shimmer with iridescent light as they drift above a peaceful mountain landscape. Magical and dreamlike, captured in a wide shot. Surreal realism style with detailed textures.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
+                     DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
+                     DEFAULT_STEPS, DEFAULT_SEED, False,
                      "Video Only", "", default_audio_negative_prompt, -1, 25, 4.5],
-                    ["forg.jpg", "the frog jumps around", 832, 832,
-                     default_negative_prompt, 2, 1.0, 4, 42, False,
-                     "Enable Audio", "frog croaking, water splashing", default_audio_negative_prompt, -1, 25, 4.5],
                 ],
-                inputs=ui_inputs, 
-                outputs=[video_output, video_with_audio_output, seed_input], 
-                fn=generate_video, 
+                inputs=ui_inputs,
+                outputs=[video_output, video_with_audio_output, seed_input],
+                fn=generate_video,
                 cache_examples="lazy",
                 label="🌟 Example Gallery"
             )
