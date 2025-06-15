@@ -9,6 +9,7 @@ except:
     current_dir = os.getcwd()
     
 sys.path.insert(0, current_dir)
+print(f"Added {current_dir} to Python path")
 
 os.makedirs("src", exist_ok=True)
 
@@ -30,14 +31,14 @@ from typing import Optional, Dict, Any
 import torch.nn.functional as F
 
 class NagWanTransformer3DModel(nn.Module):
-    """NAG-enhanced Transformer for video generation"""
+    """NAG-enhanced Transformer for video generation (simplified demo)"""
     
     def __init__(
         self,
         in_channels: int = 4,
         out_channels: int = 4,
-        hidden_size: int = 768,
-        num_layers: int = 4,
+        hidden_size: int = 1280,
+        num_layers: int = 2,
         num_heads: int = 8,
     ):
         super().__init__()
@@ -50,46 +51,22 @@ class NagWanTransformer3DModel(nn.Module):
         self.config = type('Config', (), {
             'in_channels': in_channels,
             'out_channels': out_channels,
-            'hidden_size': hidden_size
+            'hidden_size': hidden_size,
+            'num_attention_heads': num_heads,
+            'attention_head_dim': hidden_size // num_heads,
         })()
         
-        # For this demo, we'll use a simple noise-to-noise model
-        # instead of loading the full 28GB model
-        self.conv_in = nn.Conv3d(in_channels, 320, kernel_size=3, padding=1)
-        self.time_embed = nn.Sequential(
-            nn.Linear(320, 1280),
-            nn.SiLU(),
-            nn.Linear(1280, 1280),
-        )
-        self.down_blocks = nn.ModuleList([
-            nn.Conv3d(320, 320, kernel_size=3, stride=2, padding=1),
-            nn.Conv3d(320, 640, kernel_size=3, stride=2, padding=1),
-            nn.Conv3d(640, 1280, kernel_size=3, stride=2, padding=1),
-        ])
-        self.mid_block = nn.Conv3d(1280, 1280, kernel_size=3, padding=1)
-        self.up_blocks = nn.ModuleList([
-            nn.ConvTranspose3d(1280, 640, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.ConvTranspose3d(640, 320, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.ConvTranspose3d(320, 320, kernel_size=3, stride=2, padding=1, output_padding=1),
-        ])
-        self.conv_out = nn.Conv3d(320, out_channels, kernel_size=3, padding=1)
-    
-    @classmethod
-    def from_single_file(cls, model_path, **kwargs):
-        """Load model from single file"""
-        print(f"Note: Loading simplified NAG model instead of {model_path}")
-        print("This is a demo version that doesn't require 28GB of weights")
+        # Simple conv layers for demo
+        self.conv_in = nn.Conv3d(in_channels, 64, kernel_size=3, padding=1)
+        self.conv_mid = nn.Conv3d(64, 64, kernel_size=3, padding=1)
+        self.conv_out = nn.Conv3d(64, out_channels, kernel_size=3, padding=1)
         
-        # Create a simplified model
-        model = cls(
-            in_channels=4,
-            out_channels=4,
-            hidden_size=768,
-            num_layers=4,
-            num_heads=8
+        # Time embedding
+        self.time_embed = nn.Sequential(
+            nn.Linear(1, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, 64),
         )
-            
-        return model.to(kwargs.get('torch_dtype', torch.float32))
         
     @staticmethod
     def attn_processors():
@@ -98,14 +75,6 @@ class NagWanTransformer3DModel(nn.Module):
     @staticmethod  
     def set_attn_processor(processor):
         pass
-    
-    def time_proj(self, timesteps, dim=320):
-        half_dim = dim // 2
-        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
-        emb = torch.exp(-emb * torch.arange(half_dim, device=timesteps.device))
-        emb = timesteps[:, None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
-        return emb
         
     def forward(
         self, 
@@ -115,32 +84,39 @@ class NagWanTransformer3DModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs
     ):
-        # Get timestep embeddings
-        if timestep is not None:
-            t_emb = self.time_proj(timestep)
-            t_emb = self.time_embed(t_emb)
+        # Simple forward pass for demo
+        batch_size = hidden_states.shape[0]
         
-        # Initial conv
+        # Time embedding
+        if timestep is not None:
+            # Ensure timestep is the right shape
+            if timestep.ndim == 0:
+                timestep = timestep.unsqueeze(0)
+            if timestep.shape[0] != batch_size:
+                timestep = timestep.repeat(batch_size)
+            
+            # Normalize timestep to [0, 1]
+            t_emb = timestep.float() / 1000.0
+            t_emb = t_emb.view(-1, 1)
+            t_emb = self.time_embed(t_emb)
+            
+            # Reshape for broadcasting
+            t_emb = t_emb.view(batch_size, -1, 1, 1, 1)
+        
+        # Simple convolutions
         h = self.conv_in(hidden_states)
         
-        # Down blocks
-        down_block_res_samples = []
-        for down_block in self.down_blocks:
-            down_block_res_samples.append(h)
-            h = down_block(h)
+        # Add time embedding if available
+        if timestep is not None:
+            h = h + t_emb
         
-        # Mid block
-        h = self.mid_block(h)
-        
-        # Up blocks
-        for i, up_block in enumerate(self.up_blocks):
-            h = up_block(h)
-            # Add skip connections
-            if i < len(down_block_res_samples):
-                h = h + down_block_res_samples[-(i+1)]
-        
-        # Final conv
+        h = F.silu(h)
+        h = self.conv_mid(h)
+        h = F.silu(h)
         h = self.conv_out(h)
+        
+        # Add residual connection
+        h = h + hidden_states
         
         return h
 ''')
@@ -394,8 +370,9 @@ import types
 import random
 import spaces
 import torch
+import torch.nn as nn
 import numpy as np
-from diffusers import AutoencoderKLWan, UniPCMultistepScheduler
+from diffusers import AutoencoderKL, UniPCMultistepScheduler, DDPMScheduler
 from diffusers.utils import export_to_video
 import gradio as gr
 import tempfile
@@ -414,7 +391,17 @@ try:
     print("Successfully imported NAG modules")
 except Exception as e:
     print(f"Error importing NAG modules: {e}")
-    raise
+    print("Attempting to recreate modules...")
+    # Wait a bit and try again
+    import time
+    time.sleep(3)
+    try:
+        from src.pipeline_wan_nag import NAGWanPipeline
+        from src.transformer_wan_nag import NagWanTransformer3DModel
+        print("Successfully imported NAG modules on second attempt")
+    except:
+        print("Failed to import modules. Please restart the application.")
+        sys.exit(1)
 
 # MMAudio imports
 try:
@@ -436,12 +423,12 @@ from mmaudio.model.utils.features_utils import FeaturesUtils
 
 # Constants
 MOD_VALUE = 32
-DEFAULT_DURATION_SECONDS = 4
-DEFAULT_STEPS = 4
+DEFAULT_DURATION_SECONDS = 2
+DEFAULT_STEPS = 2
 DEFAULT_SEED = 2025
-DEFAULT_H_SLIDER_VALUE = 256
-DEFAULT_W_SLIDER_VALUE = 256
-NEW_FORMULA_MAX_AREA = 480.0 * 832.0
+DEFAULT_H_SLIDER_VALUE = 128
+DEFAULT_W_SLIDER_VALUE = 128
+NEW_FORMULA_MAX_AREA = 256.0 * 256.0
 
 SLIDER_MIN_H, SLIDER_MAX_H = 128, 512
 SLIDER_MIN_W, SLIDER_MAX_W = 128, 512
@@ -453,6 +440,7 @@ MAX_FRAMES_MODEL = 129
 
 DEFAULT_NAG_NEGATIVE_PROMPT = "Static, motionless, still, ugly, bad quality, worst quality, poorly drawn, low resolution, blurry, lack of details"
 
+# Note: Model IDs are kept for reference but not used in demo
 MODEL_ID = "Wan-AI/Wan2.1-T2V-14B-Diffusers"
 SUB_MODEL_ID = "vrgamedevgirl84/Wan14BT2VFusioniX"
 SUB_MODEL_FILENAME = "Wan14BT2VFusioniX_fp16_.safetensors"
@@ -460,44 +448,97 @@ LORA_REPO_ID = "Kijai/WanVideo_comfy"
 LORA_FILENAME = "Wan21_CausVid_14B_T2V_lora_rank32.safetensors"
 
 # Initialize models
-print("Loading VAE...")
-vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32)
+print("Creating demo models...")
 
-# Skip downloading the large model file
+# Create a simple VAE-like model for demo
+class DemoVAE(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 4, 3, padding=1)
+        )
+        self.decoder = nn.Sequential(
+            nn.Conv2d(4, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 3, 3, padding=1),
+            nn.Tanh()  # Output in [-1, 1]
+        )
+        self.config = type('Config', (), {
+            'scaling_factor': 0.18215,
+            'latent_channels': 4,
+        })()
+    
+    def encode(self, x):
+        # Simple encoding
+        encoded = self.encoder(x)
+        return type('EncoderOutput', (), {'latent_dist': type('LatentDist', (), {'sample': lambda: encoded})()})()
+    
+    def decode(self, z):
+        # Simple decoding
+        # Handle different input shapes
+        if z.dim() == 5:  # Video: (B, C, F, H, W)
+            b, c, f, h, w = z.shape
+            z = z.permute(0, 2, 1, 3, 4).reshape(b * f, c, h, w)
+            decoded = self.decoder(z)
+            decoded = decoded.reshape(b, f, 3, h * 8, w * 8).permute(0, 2, 1, 3, 4)
+        else:  # Image: (B, C, H, W)
+            decoded = self.decoder(z)
+        return type('DecoderOutput', (), {'sample': decoded})()
+
+vae = DemoVAE()
+
 print("Creating simplified NAG transformer model...")
-# wan_path = hf_hub_download(repo_id=SUB_MODEL_ID, filename=SUB_MODEL_FILENAME)
-wan_path = "dummy_path"  # We'll use a simplified model instead
-
-print("Creating transformer model...")
-transformer = NagWanTransformer3DModel.from_single_file(wan_path, torch_dtype=torch.bfloat16)
+transformer = NagWanTransformer3DModel(
+    in_channels=4,
+    out_channels=4,
+    hidden_size=1280,
+    num_layers=2,  # Reduced for demo
+    num_heads=8
+)
 
 print("Creating pipeline...")
-pipe = NAGWanPipeline.from_pretrained(
-    MODEL_ID, vae=vae, transformer=transformer, torch_dtype=torch.bfloat16
+# Create a minimal pipeline for demo
+pipe = NAGWanPipeline(
+    vae=vae,
+    text_encoder=None,
+    tokenizer=None,
+    transformer=transformer,
+    scheduler=DDPMScheduler(
+        num_train_timesteps=1000,
+        beta_start=0.00085,
+        beta_end=0.012,
+        beta_schedule="scaled_linear",
+        clip_sample=False,
+        set_alpha_to_one=False,
+        steps_offset=1,
+    )
 )
-pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=5.0)
 
 # Move to appropriate device
-if torch.cuda.is_available():
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f"Using device: {device}")
+
+# Move models to device
+vae = vae.to(device)
+transformer = transformer.to(device)
+
+if device == 'cuda':
     pipe.to("cuda")
-    print("Using CUDA device")
+    print("Pipeline moved to CUDA")
 else:
     pipe.to("cpu")
     print("Warning: CUDA not available, using CPU (will be slow)")
 
-# Load LoRA weights for faster generation
-try:
-    print("Loading LoRA weights...")
-    causvid_path = hf_hub_download(repo_id=LORA_REPO_ID, filename=LORA_FILENAME)
-    pipe.load_lora_weights(causvid_path, adapter_name="causvid_lora")
-    pipe.set_adapters(["causvid_lora"], adapter_weights=[0.95])
-    pipe.fuse_lora()
-    print("LoRA weights loaded successfully")
-except Exception as e:
-    print(f"Warning: Could not load LoRA weights: {e}")
+# Skip LoRA for demo version
+print("Demo version ready!")
 
-pipe.transformer.__class__.attn_processors = NagWanTransformer3DModel.attn_processors
-pipe.transformer.__class__.set_attn_processor = NagWanTransformer3DModel.set_attn_processor
+# Check if transformer has the required methods
+if hasattr(transformer, 'attn_processors'):
+    pipe.transformer.__class__.attn_processors = NagWanTransformer3DModel.attn_processors
+if hasattr(transformer, 'set_attn_processor'):
+    pipe.transformer.__class__.set_attn_processor = NagWanTransformer3DModel.set_attn_processor
 
 # Audio model setup
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -643,10 +684,11 @@ def get_duration(
         audio_mode, audio_prompt, audio_negative_prompt,
         audio_seed, audio_steps, audio_cfg_strength,
 ):
-    duration = int(duration_seconds) * int(steps) * 2.25 + 5
+    # Simplified duration calculation for demo
+    duration = int(duration_seconds) * int(steps) + 10
     if audio_mode == "Enable Audio":
-        duration += 60
-    return duration
+        duration += 30  # Reduced from 60 for demo
+    return min(duration, 60)  # Cap at 60 seconds for demo
 
 @torch.inference_mode()
 def add_audio_to_video(video_path, duration_sec, audio_prompt, audio_negative_prompt, 
@@ -693,43 +735,64 @@ def generate_video(
         audio_mode="Video Only", audio_prompt="", audio_negative_prompt="music",
         audio_seed=-1, audio_steps=25, audio_cfg_strength=4.5,
 ):
-    target_h = max(MOD_VALUE, (int(height) // MOD_VALUE) * MOD_VALUE)
-    target_w = max(MOD_VALUE, (int(width) // MOD_VALUE) * MOD_VALUE)
+    try:
+        target_h = max(MOD_VALUE, (int(height) // MOD_VALUE) * MOD_VALUE)
+        target_w = max(MOD_VALUE, (int(width) // MOD_VALUE) * MOD_VALUE)
 
-    num_frames = np.clip(int(round(int(duration_seconds) * FIXED_FPS) + 1), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
+        num_frames = np.clip(int(round(int(duration_seconds) * FIXED_FPS) + 1), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
 
-    current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
+        current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
 
-    with torch.inference_mode():
-        nag_output_frames_list = pipe(
-            prompt=prompt,
-            nag_negative_prompt=nag_negative_prompt,
-            nag_scale=nag_scale,
-            nag_tau=3.5,
-            nag_alpha=0.5,
-            height=target_h, width=target_w, num_frames=num_frames,
-            guidance_scale=0.,
-            num_inference_steps=int(steps),
-            generator=torch.Generator(device=device).manual_seed(current_seed)
-        ).frames[0]
+        # Ensure transformer is on the right device and dtype
+        if hasattr(pipe, 'transformer'):
+            pipe.transformer = pipe.transformer.to(device).to(torch.float32)
+        if hasattr(pipe, 'vae'):
+            pipe.vae = pipe.vae.to(device).to(torch.float32)
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
-        nag_video_path = tmpfile.name
-    export_to_video(nag_output_frames_list, nag_video_path, fps=FIXED_FPS)
+        with torch.inference_mode():
+            nag_output_frames_list = pipe(
+                prompt=prompt,
+                nag_negative_prompt=nag_negative_prompt,
+                nag_scale=nag_scale,
+                nag_tau=3.5,
+                nag_alpha=0.5,
+                height=target_h, width=target_w, num_frames=num_frames,
+                guidance_scale=0.,
+                num_inference_steps=int(steps),
+                generator=torch.Generator(device=device).manual_seed(current_seed)
+            ).frames[0]
 
-    # Generate audio if enabled
-    video_with_audio_path = None
-    if audio_mode == "Enable Audio":
-        video_with_audio_path = add_audio_to_video(
-            nag_video_path, duration_seconds, 
-            audio_prompt, audio_negative_prompt,
-            audio_seed, audio_steps, audio_cfg_strength
-        )
-    
-    clear_cache()
-    cleanup_temp_files()
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
+            nag_video_path = tmpfile.name
+        export_to_video(nag_output_frames_list, nag_video_path, fps=FIXED_FPS)
 
-    return nag_video_path, video_with_audio_path, current_seed
+        # Generate audio if enabled
+        video_with_audio_path = None
+        if audio_mode == "Enable Audio":
+            try:
+                video_with_audio_path = add_audio_to_video(
+                    nag_video_path, duration_seconds, 
+                    audio_prompt, audio_negative_prompt,
+                    audio_seed, audio_steps, audio_cfg_strength
+                )
+            except Exception as e:
+                print(f"Warning: Could not generate audio: {e}")
+                video_with_audio_path = None
+        
+        clear_cache()
+        cleanup_temp_files()
+
+        return nag_video_path, video_with_audio_path, current_seed
+        
+    except Exception as e:
+        print(f"Error generating video: {e}")
+        # Return a simple error video
+        error_frames = np.zeros((1, 64, 64, 3), dtype=np.uint8)
+        error_frames[:, :, :] = [255, 0, 0]  # Red frame
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
+            error_video_path = tmpfile.name
+        export_to_video([error_frames[0]], error_video_path, fps=1)
+        return error_video_path, None, current_seed
 
 def update_audio_visibility(audio_mode):
     return gr.update(visible=(audio_mode == "Enable Audio"))
@@ -738,15 +801,16 @@ def update_audio_visibility(audio_mode):
 with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_classes="container"):
         gr.HTML("""
-            <h1 class="main-title">🎬 NAG Video Generator with Audio (Demo)</h1>
-            <p class="subtitle">Simplified NAG T2V with MMAudio Integration</p>
+            <h1 class="main-title">🎬 NAG Video Demo with Audio</h1>
+            <p class="subtitle">Lightweight Text-to-Video with Normalized Attention Guidance + MMAudio</p>
         """)
         
         gr.HTML("""
             <div class="info-box">
-                <p>⚠️ <strong>Demo Version:</strong> This uses a simplified model to avoid downloading 28GB of weights</p>
+                <p>📌 <strong>Demo Version:</strong> This is a simplified demo that demonstrates NAG concepts without large model downloads</p>
                 <p>🚀 <strong>NAG Technology:</strong> Normalized Attention Guidance for enhanced video quality</p>
                 <p>🎵 <strong>Audio:</strong> Optional synchronized audio generation with MMAudio</p>
+                <p>⚡ <strong>Fast:</strong> Runs without downloading 28GB model files</p>
             </div>
         """)
 
@@ -822,7 +886,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                     with gr.Row():
                         duration_seconds_input = gr.Slider(
                             minimum=1,
-                            maximum=8,
+                            maximum=4,
                             step=1,
                             value=DEFAULT_DURATION_SECONDS,
                             label="📱 Duration (seconds)",
@@ -830,7 +894,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                         )
                         steps_slider = gr.Slider(
                             minimum=1,
-                            maximum=8,
+                            maximum=4,
                             step=1,
                             value=DEFAULT_STEPS,
                             label="🔄 Inference Steps",
@@ -893,6 +957,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                 
                 gr.HTML("""
                     <div style="text-align: center; margin-top: 20px; color: #6b7280;">
+                        <p>💡 Demo version with simplified model - Real NAG would produce higher quality results</p>
                         <p>💡 Tip: Try different NAG scales for varied artistic effects!</p>
                     </div>
                 """)
@@ -901,16 +966,16 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
         gr.Examples(
             examples=[
                 ["A ginger cat passionately plays electric guitar with intensity and emotion on a stage. The background is shrouded in deep darkness. Spotlights cast dramatic shadows.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
-                 DEFAULT_STEPS, DEFAULT_SEED, False,
+                 128, 128, 2,
+                 2, DEFAULT_SEED, False,
                  "Enable Audio", "electric guitar riffs, cat meowing", default_audio_negative_prompt, -1, 25, 4.5],
                 ["A red vintage Porsche convertible flying over a rugged coastal cliff. Monstrous waves violently crashing against the rocks below. A lighthouse stands tall atop the cliff.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
-                 DEFAULT_STEPS, DEFAULT_SEED, False,
+                 128, 128, 2,
+                 2, DEFAULT_SEED, False,
                  "Enable Audio", "car engine roaring, ocean waves crashing, wind", default_audio_negative_prompt, -1, 25, 4.5],
                 ["Enormous glowing jellyfish float slowly across a sky filled with soft clouds. Their tentacles shimmer with iridescent light as they drift above a peaceful mountain landscape.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, DEFAULT_DURATION_SECONDS,
-                 DEFAULT_STEPS, DEFAULT_SEED, False,
+                 128, 128, 2,
+                 2, DEFAULT_SEED, False,
                  "Video Only", "", default_audio_negative_prompt, -1, 25, 4.5],
             ],
             fn=generate_video,
