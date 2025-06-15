@@ -37,9 +37,9 @@ class NagWanTransformer3DModel(nn.Module):
         self,
         in_channels: int = 4,
         out_channels: int = 4,
-        hidden_size: int = 1280,
-        num_layers: int = 2,
-        num_heads: int = 8,
+        hidden_size: int = 64,
+        num_layers: int = 1,
+        num_heads: int = 4,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -57,15 +57,15 @@ class NagWanTransformer3DModel(nn.Module):
         })()
         
         # Simple conv layers for demo
-        self.conv_in = nn.Conv3d(in_channels, 64, kernel_size=3, padding=1)
-        self.conv_mid = nn.Conv3d(64, 64, kernel_size=3, padding=1)
-        self.conv_out = nn.Conv3d(64, out_channels, kernel_size=3, padding=1)
+        self.conv_in = nn.Conv3d(in_channels, hidden_size, kernel_size=3, padding=1)
+        self.conv_mid = nn.Conv3d(hidden_size, hidden_size, kernel_size=3, padding=1)
+        self.conv_out = nn.Conv3d(hidden_size, out_channels, kernel_size=3, padding=1)
         
         # Time embedding
         self.time_embed = nn.Sequential(
             nn.Linear(1, hidden_size),
             nn.SiLU(),
-            nn.Linear(hidden_size, 64),
+            nn.Linear(hidden_size, hidden_size),
         )
         
     @staticmethod
@@ -428,10 +428,10 @@ DEFAULT_STEPS = 2
 DEFAULT_SEED = 2025
 DEFAULT_H_SLIDER_VALUE = 128
 DEFAULT_W_SLIDER_VALUE = 128
-NEW_FORMULA_MAX_AREA = 256.0 * 256.0
+NEW_FORMULA_MAX_AREA = 128.0 * 128.0
 
-SLIDER_MIN_H, SLIDER_MAX_H = 128, 512
-SLIDER_MIN_W, SLIDER_MAX_W = 128, 512
+SLIDER_MIN_H, SLIDER_MAX_H = 128, 256
+SLIDER_MIN_W, SLIDER_MAX_W = 128, 256
 MAX_SEED = np.iinfo(np.int32).max
 
 FIXED_FPS = 16
@@ -493,9 +493,9 @@ print("Creating simplified NAG transformer model...")
 transformer = NagWanTransformer3DModel(
     in_channels=4,
     out_channels=4,
-    hidden_size=1280,
-    num_layers=2,  # Reduced for demo
-    num_heads=8
+    hidden_size=64,  # Reduced from 1280 for demo
+    num_layers=1,  # Reduced for demo
+    num_heads=4  # Reduced for demo
 )
 
 print("Creating pipeline...")
@@ -511,8 +511,7 @@ pipe = NAGWanPipeline(
         beta_end=0.012,
         beta_schedule="scaled_linear",
         clip_sample=False,
-        set_alpha_to_one=False,
-        steps_offset=1,
+        prediction_type="epsilon",
     )
 )
 
