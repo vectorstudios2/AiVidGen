@@ -313,17 +313,28 @@ css = """
 with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_classes="container"):
         gr.HTML("""
-            <h1 class="main-title">🎬 NAG Video Generator with Auto Audio</h1>
-            <p class="subtitle">Fast 4-step Wan2.1-T2V-14B with NAG + Automatic Audio Generation</p>
+            <h1 class="main-title">🎬 VEO3 Free</h1>
+            <p class="subtitle">Wan2.1-T2V-14B + Fast 4-step with NAG + Automatic Audio Generation</p>
         """)
         
+
         gr.HTML("""
-            <div class="info-box">
-                <p>🚀 <strong>Powered by:</strong> NAG + CausVid LoRA for video + MMAudio for automatic audio synthesis</p>
-                <p>⚡ <strong>Speed:</strong> Generate videos with synchronized audio in one click!</p>
-                <p>🎵 <strong>Audio:</strong> Automatically generates matching audio based on your video prompt</p>
-            </div>
+        <div class="badge-container">
+            <a href="https://huggingface.co/vrgamedevgirl84/Wan14BT2VFusioniX" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=FusionX&message=ENHANCED%20MODEL&color=%236a4c93&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="FusionX Enhanced">
+            </a>
+            <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=BASE&message=WAN%202.1%20T2V-FusioniX&color=%23008080&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="Base Model">
+            </a>
+            <a href="https://huggingface.co/spaces/Heartsync/WAN2-1-fast-T2V-FusioniX2" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=BASE&message=WAN%202.1%20T2V-Fusioni2X&color=%23008080&labelColor=%23533a7d&logo=huggingface&logoColor=%23ffffff&style=for-the-badge" alt="Base Model">
+            </a>            
+            <a href="https://huggingface.co/spaces/Heartsync/wan2-1-fast-security" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=WAN%202.1&message=FAST%20%26%20Furios&color=%23008080&labelColor=%230000ff&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="badge">
+            </a>
+        </div>
         """)
+
         
         with gr.Row():
             with gr.Column(scale=1):
