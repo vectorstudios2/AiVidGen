@@ -718,8 +718,11 @@ css = """
 }
 """
 
+# RIGHT AFTER the css definition, ADD these lines:
+default_prompt = "A serene beach with waves gently rolling onto the shore"
 default_audio_prompt = ""
 default_audio_negative_prompt = "music"
+
 
 def get_duration(
         prompt,
