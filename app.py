@@ -2,6 +2,8 @@
 import os
 import sys
 
+print("Starting NAG Video Demo application...")
+
 # Add current directory to Python path
 try:
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +48,7 @@ class NagWanTransformer3DModel(nn.Module):
         self.out_channels = out_channels
         self.hidden_size = hidden_size
         self.training = False
+        self._dtype = torch.float32  # Add dtype attribute
         
         # Dummy config for compatibility
         self.config = type('Config', (), {
@@ -67,6 +70,27 @@ class NagWanTransformer3DModel(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_size, hidden_size),
         )
+    
+    @property
+    def dtype(self):
+        """Return the dtype of the model"""
+        return self._dtype
+    
+    @dtype.setter
+    def dtype(self, value):
+        """Set the dtype of the model"""
+        self._dtype = value
+    
+    def to(self, *args, **kwargs):
+        """Override to method to handle dtype"""
+        result = super().to(*args, **kwargs)
+        # Update dtype if moving to a specific dtype
+        for arg in args:
+            if isinstance(arg, torch.dtype):
+                self._dtype = arg
+        if 'dtype' in kwargs:
+            self._dtype = kwargs['dtype']
+        return result
         
     @staticmethod
     def attn_processors():
@@ -423,8 +447,8 @@ from mmaudio.model.utils.features_utils import FeaturesUtils
 
 # Constants
 MOD_VALUE = 32
-DEFAULT_DURATION_SECONDS = 2
-DEFAULT_STEPS = 2
+DEFAULT_DURATION_SECONDS = 1
+DEFAULT_STEPS = 1
 DEFAULT_SEED = 2025
 DEFAULT_H_SLIDER_VALUE = 128
 DEFAULT_W_SLIDER_VALUE = 128
@@ -434,9 +458,9 @@ SLIDER_MIN_H, SLIDER_MAX_H = 128, 256
 SLIDER_MIN_W, SLIDER_MAX_W = 128, 256
 MAX_SEED = np.iinfo(np.int32).max
 
-FIXED_FPS = 16
+FIXED_FPS = 8  # Reduced FPS for demo
 MIN_FRAMES_MODEL = 8
-MAX_FRAMES_MODEL = 129
+MAX_FRAMES_MODEL = 32  # Reduced max frames for demo
 
 DEFAULT_NAG_NEGATIVE_PROMPT = "Static, motionless, still, ugly, bad quality, worst quality, poorly drawn, low resolution, blurry, lack of details"
 
@@ -454,6 +478,7 @@ print("Creating demo models...")
 class DemoVAE(nn.Module):
     def __init__(self):
         super().__init__()
+        self._dtype = torch.float32  # Add dtype attribute
         self.encoder = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
             nn.ReLU(),
@@ -469,6 +494,27 @@ class DemoVAE(nn.Module):
             'scaling_factor': 0.18215,
             'latent_channels': 4,
         })()
+    
+    @property
+    def dtype(self):
+        """Return the dtype of the model"""
+        return self._dtype
+    
+    @dtype.setter
+    def dtype(self, value):
+        """Set the dtype of the model"""
+        self._dtype = value
+    
+    def to(self, *args, **kwargs):
+        """Override to method to handle dtype"""
+        result = super().to(*args, **kwargs)
+        # Update dtype if moving to a specific dtype
+        for arg in args:
+            if isinstance(arg, torch.dtype):
+                self._dtype = arg
+        if 'dtype' in kwargs:
+            self._dtype = kwargs['dtype']
+        return result
     
     def encode(self, x):
         # Simple encoding
@@ -519,18 +565,19 @@ pipe = NAGWanPipeline(
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
 
-# Move models to device
-vae = vae.to(device)
-transformer = transformer.to(device)
+# Move models to device with explicit dtype
+vae = vae.to(device).to(torch.float32)
+transformer = transformer.to(device).to(torch.float32)
 
-if device == 'cuda':
-    pipe.to("cuda")
-    print("Pipeline moved to CUDA")
-else:
-    pipe.to("cpu")
-    print("Warning: CUDA not available, using CPU (will be slow)")
+# Now move pipeline to device (it will handle the components)
+try:
+    pipe = pipe.to(device)
+    print(f"Pipeline moved to {device}")
+except Exception as e:
+    print(f"Warning: Could not move pipeline to {device}: {e}")
+    # Manually set device
+    pipe._execution_device = device
 
-# Skip LoRA for demo version
 print("Demo version ready!")
 
 # Check if transformer has the required methods
@@ -748,6 +795,8 @@ def generate_video(
         if hasattr(pipe, 'vae'):
             pipe.vae = pipe.vae.to(device).to(torch.float32)
 
+        print(f"Generating video: {target_w}x{target_h}, {num_frames} frames, seed {current_seed}")
+
         with torch.inference_mode():
             nag_output_frames_list = pipe(
                 prompt=prompt,
@@ -785,13 +834,21 @@ def generate_video(
         
     except Exception as e:
         print(f"Error generating video: {e}")
+        import traceback
+        traceback.print_exc()
+        
         # Return a simple error video
-        error_frames = np.zeros((1, 64, 64, 3), dtype=np.uint8)
-        error_frames[:, :, :] = [255, 0, 0]  # Red frame
+        error_frames = []
+        for i in range(8):  # Create 8 frames
+            frame = np.zeros((128, 128, 3), dtype=np.uint8)
+            frame[:, :] = [255, 0, 0]  # Red frame
+            # Add error text
+            error_frames.append(frame)
+        
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
             error_video_path = tmpfile.name
-        export_to_video([error_frames[0]], error_video_path, fps=1)
-        return error_video_path, None, current_seed
+        export_to_video(error_frames, error_video_path, fps=FIXED_FPS)
+        return error_video_path, None, 0
 
 def update_audio_visibility(audio_mode):
     return gr.update(visible=(audio_mode == "Enable Audio"))
@@ -800,8 +857,8 @@ def update_audio_visibility(audio_mode):
 with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_classes="container"):
         gr.HTML("""
-            <h1 class="main-title">🎬 NAG Video Demo with Audio</h1>
-            <p class="subtitle">Lightweight Text-to-Video with Normalized Attention Guidance + MMAudio</p>
+            <h1 class="main-title">🎬 NAG Video Demo</h1>
+            <p class="subtitle">Simple Text-to-Video with NAG + Audio Generation</p>
         """)
         
         gr.HTML("""
@@ -818,8 +875,9 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                 with gr.Group(elem_classes="prompt-container"):
                     prompt = gr.Textbox(
                         label="✨ Video Prompt",
-                        placeholder="Describe your video scene in detail...",
-                        lines=3,
+                        value=default_prompt,
+                        placeholder="Describe your video scene...",
+                        lines=2,
                         elem_classes="prompt-input"
                     )
                     
@@ -831,11 +889,11 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                         )
                         nag_scale = gr.Slider(
                             label="NAG Scale",
-                            minimum=1.0,
+                            minimum=0.0,
                             maximum=20.0,
                             step=0.25,
-                            value=11.0,
-                            info="Higher values = stronger guidance"
+                            value=5.0,
+                            info="Higher values = stronger guidance (0 = no NAG)"
                         )
 
                 audio_mode = gr.Radio(
@@ -866,9 +924,9 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                         )
                         audio_steps = gr.Slider(
                             minimum=1,
-                            maximum=50,
+                            maximum=25,
                             step=1,
-                            value=25,
+                            value=10,
                             label="🚀 Audio Steps"
                         )
                         audio_cfg_strength = gr.Slider(
@@ -885,7 +943,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                     with gr.Row():
                         duration_seconds_input = gr.Slider(
                             minimum=1,
-                            maximum=4,
+                            maximum=2,
                             step=1,
                             value=DEFAULT_DURATION_SECONDS,
                             label="📱 Duration (seconds)",
@@ -893,7 +951,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                         )
                         steps_slider = gr.Slider(
                             minimum=1,
-                            maximum=4,
+                            maximum=2,
                             step=1,
                             value=DEFAULT_STEPS,
                             label="🔄 Inference Steps",
@@ -964,18 +1022,18 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
         gr.Markdown("### 🎯 Example Prompts")
         gr.Examples(
             examples=[
-                ["A ginger cat passionately plays electric guitar with intensity and emotion on a stage. The background is shrouded in deep darkness. Spotlights cast dramatic shadows.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 128, 128, 2,
-                 2, DEFAULT_SEED, False,
-                 "Enable Audio", "electric guitar riffs, cat meowing", default_audio_negative_prompt, -1, 25, 4.5],
-                ["A red vintage Porsche convertible flying over a rugged coastal cliff. Monstrous waves violently crashing against the rocks below. A lighthouse stands tall atop the cliff.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 128, 128, 2,
-                 2, DEFAULT_SEED, False,
-                 "Enable Audio", "car engine roaring, ocean waves crashing, wind", default_audio_negative_prompt, -1, 25, 4.5],
-                ["Enormous glowing jellyfish float slowly across a sky filled with soft clouds. Their tentacles shimmer with iridescent light as they drift above a peaceful mountain landscape.", DEFAULT_NAG_NEGATIVE_PROMPT, 11,
-                 128, 128, 2,
-                 2, DEFAULT_SEED, False,
-                 "Video Only", "", default_audio_negative_prompt, -1, 25, 4.5],
+                ["A cat playing guitar on stage", DEFAULT_NAG_NEGATIVE_PROMPT, 5,
+                 128, 128, 1,
+                 1, DEFAULT_SEED, False,
+                 "Enable Audio", "guitar music", default_audio_negative_prompt, -1, 10, 4.5],
+                ["A red car driving on a cliff road", DEFAULT_NAG_NEGATIVE_PROMPT, 5,
+                 128, 128, 1,
+                 1, DEFAULT_SEED, False,
+                 "Enable Audio", "car engine, wind", default_audio_negative_prompt, -1, 10, 4.5],
+                ["Glowing jellyfish floating in the sky", DEFAULT_NAG_NEGATIVE_PROMPT, 5,
+                 128, 128, 1,
+                 1, DEFAULT_SEED, False,
+                 "Video Only", "", default_audio_negative_prompt, -1, 10, 4.5],
             ],
             fn=generate_video,
             inputs=[prompt, nag_negative_prompt, nag_scale,
