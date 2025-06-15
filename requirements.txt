@@ -34,3 +34,4 @@ open_clip_torch
 soundfile
 av
 
+streamlit
