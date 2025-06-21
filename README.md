@@ -4,7 +4,7 @@ emoji: 🔊
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
-sdk_version: 5.34.0
+sdk_version: 5.34.2
 app_file: app.py
 pinned: false
 short_description: Wan2.1-T2V-14B + Fast 4-step with NAG + Automatic Audio
