@@ -262,71 +262,11 @@ examples = [
 
 # CSS styling - Fixed for better layout
 css = """
-/* Global container settings */
-.gradio-container {
-    max-width: 100% !important;
-    padding: 20px !important;
-}
-
-/* Main container */
-.container {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 20px;
-}
-
-/* Title styling */
-.main-title {
-    text-align: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-size: 2.5em;
-    font-weight: bold;
-    margin-bottom: 10px;
-}
-
-.subtitle {
-    text-align: center;
-    color: #6b7280;
-    margin-bottom: 30px;
-}
-
-/* Left column styling */
-.prompt-container {
-    background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-    border-radius: 15px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-.generate-btn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    font-size: 1.2em;
-    font-weight: bold;
-    padding: 15px 30px;
-    border-radius: 10px;
-    border: none;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    width: 100%;
-    margin-top: 20px;
-}
-
-.generate-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
 /* Right column - video output */
 .video-output {
     border-radius: 15px;
     overflow: hidden;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-    background: #1a1a1a;
-    padding: 10px;
     width: 100% !important;
     height: auto !important;
     min-height: 400px;
@@ -338,41 +278,23 @@ css = """
     height: auto !important;
     max-height: 600px;
     object-fit: contain;
+    display: block;
 }
 
-/* Settings panels */
-.settings-panel {
-    background: #f9fafb;
-    border-radius: 15px;
-    padding: 20px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+/* Remove any overlay or background from video container */
+.video-output > div {
+    background: transparent !important;
+    padding: 0 !important;
 }
 
-.slider-container {
-    background: white;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 15px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+/* Remove gradio's default video player overlay */
+.video-output .wrap {
+    background: transparent !important;
 }
 
-.audio-settings {
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-    border-radius: 10px;
-    padding: 15px;
-    margin-top: 10px;
-    border-left: 4px solid #f59e0b;
-}
-
-/* Responsive grid layout */
-@media (max-width: 768px) {
-    .gradio-container {
-        padding: 10px !important;
-    }
-    
-    .main-title {
-        font-size: 1.8em;
-    }
+/* Ensure no gray overlay on video controls */
+.video-output video::-webkit-media-controls-enclosure {
+    background: transparent;
 }
 """
 
