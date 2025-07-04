@@ -71,18 +71,23 @@ audio_model_config.download_if_needed()
 setup_eval_logging()
 
 # Initialize NAG Video Model
-vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32)
-wan_path = hf_hub_download(repo_id=SUB_MODEL_ID, filename=SUB_MODEL_FILENAME)
-transformer = NagWanTransformer3DModel.from_single_file(wan_path, torch_dtype=torch.bfloat16)
-pipe = NAGWanPipeline.from_pretrained(
-    MODEL_ID, vae=vae, transformer=transformer, torch_dtype=torch.bfloat16
-)
-pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=5.0)
-pipe.to("cuda")
+try:
+    vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32)
+    wan_path = hf_hub_download(repo_id=SUB_MODEL_ID, filename=SUB_MODEL_FILENAME)
+    transformer = NagWanTransformer3DModel.from_single_file(wan_path, torch_dtype=torch.bfloat16)
+    pipe = NAGWanPipeline.from_pretrained(
+        MODEL_ID, vae=vae, transformer=transformer, torch_dtype=torch.bfloat16
+    )
+    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=5.0)
+    pipe.to("cuda")
 
-pipe.transformer.__class__.attn_processors = NagWanTransformer3DModel.attn_processors
-pipe.transformer.__class__.set_attn_processor = NagWanTransformer3DModel.set_attn_processor
-pipe.transformer.__class__.forward = NagWanTransformer3DModel.forward
+    pipe.transformer.__class__.attn_processors = NagWanTransformer3DModel.attn_processors
+    pipe.transformer.__class__.set_attn_processor = NagWanTransformer3DModel.set_attn_processor
+    pipe.transformer.__class__.forward = NagWanTransformer3DModel.forward
+    print("NAG Video Model loaded successfully!")
+except Exception as e:
+    print(f"Error loading NAG Video Model: {e}")
+    pipe = None
 
 # Initialize MMAudio Model
 def get_mmaudio_model() -> tuple[MMAudio, FeaturesUtils, SequenceConfig]:
@@ -102,40 +107,53 @@ def get_mmaudio_model() -> tuple[MMAudio, FeaturesUtils, SequenceConfig]:
     
     return net, feature_utils, seq_cfg
 
-audio_net, audio_feature_utils, audio_seq_cfg = get_mmaudio_model()
+try:
+    audio_net, audio_feature_utils, audio_seq_cfg = get_mmaudio_model()
+    print("MMAudio Model loaded successfully!")
+except Exception as e:
+    print(f"Error loading MMAudio Model: {e}")
+    audio_net = None
 
 # Audio generation function
 @torch.inference_mode()
 def add_audio_to_video(video_path, prompt, audio_negative_prompt, audio_steps, audio_cfg_strength, duration):
     """Generate and add audio to video using MMAudio"""
-    rng = torch.Generator(device=device)
-    rng.seed()  # Random seed for audio
-    fm = FlowMatching(min_sigma=0, inference_mode='euler', num_steps=audio_steps)
-    
-    video_info = load_video(video_path, duration)
-    clip_frames = video_info.clip_frames
-    sync_frames = video_info.sync_frames
-    duration = video_info.duration_sec
-    clip_frames = clip_frames.unsqueeze(0)
-    sync_frames = sync_frames.unsqueeze(0)
-    audio_seq_cfg.duration = duration
-    audio_net.update_seq_lengths(audio_seq_cfg.latent_seq_len, audio_seq_cfg.clip_seq_len, audio_seq_cfg.sync_seq_len)
-    
-    audios = mmaudio_generate(clip_frames,
-                              sync_frames, [prompt],
-                              negative_text=[audio_negative_prompt],
-                              feature_utils=audio_feature_utils,
-                              net=audio_net,
-                              fm=fm,
-                              rng=rng,
-                              cfg_strength=audio_cfg_strength)
-    audio = audios.float().cpu()[0]
-    
-    # Create video with audio
-    video_with_audio_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
-    make_video(video_info, video_with_audio_path, audio, sampling_rate=audio_seq_cfg.sampling_rate)
-    
-    return video_with_audio_path
+    if audio_net is None:
+        print("MMAudio model not loaded, returning video without audio")
+        return video_path
+        
+    try:
+        rng = torch.Generator(device=device)
+        rng.seed()  # Random seed for audio
+        fm = FlowMatching(min_sigma=0, inference_mode='euler', num_steps=audio_steps)
+        
+        video_info = load_video(video_path, duration)
+        clip_frames = video_info.clip_frames
+        sync_frames = video_info.sync_frames
+        duration = video_info.duration_sec
+        clip_frames = clip_frames.unsqueeze(0)
+        sync_frames = sync_frames.unsqueeze(0)
+        audio_seq_cfg.duration = duration
+        audio_net.update_seq_lengths(audio_seq_cfg.latent_seq_len, audio_seq_cfg.clip_seq_len, audio_seq_cfg.sync_seq_len)
+        
+        audios = mmaudio_generate(clip_frames,
+                                  sync_frames, [prompt],
+                                  negative_text=[audio_negative_prompt],
+                                  feature_utils=audio_feature_utils,
+                                  net=audio_net,
+                                  fm=fm,
+                                  rng=rng,
+                                  cfg_strength=audio_cfg_strength)
+        audio = audios.float().cpu()[0]
+        
+        # Create video with audio
+        video_with_audio_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+        make_video(video_info, video_with_audio_path, audio, sampling_rate=audio_seq_cfg.sampling_rate)
+        
+        return video_with_audio_path
+    except Exception as e:
+        print(f"Error in audio generation: {e}")
+        return video_path
 
 # Combined generation function
 def get_duration(prompt, nag_negative_prompt, nag_scale, height, width, duration_seconds, 
@@ -156,53 +174,65 @@ def generate_video_with_audio(
         enable_audio=True, audio_negative_prompt=DEFAULT_AUDIO_NEGATIVE_PROMPT,
         audio_steps=25, audio_cfg_strength=4.5,
 ):
-    # Generate video first
-    target_h = max(MOD_VALUE, (int(height) // MOD_VALUE) * MOD_VALUE)
-    target_w = max(MOD_VALUE, (int(width) // MOD_VALUE) * MOD_VALUE)
-    
-    num_frames = np.clip(int(round(int(duration_seconds) * FIXED_FPS) + 1), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
-    
-    current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
-    
-    with torch.inference_mode():
-        nag_output_frames_list = pipe(
-            prompt=prompt,
-            nag_negative_prompt=nag_negative_prompt,
-            nag_scale=nag_scale,
-            nag_tau=3.5,
-            nag_alpha=0.5,
-            height=target_h, width=target_w, num_frames=num_frames,
-            guidance_scale=0.,
-            num_inference_steps=int(steps),
-            generator=torch.Generator(device="cuda").manual_seed(current_seed)
-        ).frames[0]
-    
-    # Save initial video without audio
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
-        temp_video_path = tmpfile.name
-    export_to_video(nag_output_frames_list, temp_video_path, fps=FIXED_FPS)
-    
-    # Add audio if enabled
-    if enable_audio:
-        try:
-            final_video_path = add_audio_to_video(
-                temp_video_path, 
-                prompt,  # Use the same prompt for audio generation
-                audio_negative_prompt,
-                audio_steps,
-                audio_cfg_strength,
-                duration_seconds
-            )
-            # Clean up temp video
-            if os.path.exists(temp_video_path):
-                os.remove(temp_video_path)
-        except Exception as e:
-            log.error(f"Audio generation failed: {e}")
+    if pipe is None:
+        return None, DEFAULT_SEED
+        
+    try:
+        # Generate video first
+        target_h = max(MOD_VALUE, (int(height) // MOD_VALUE) * MOD_VALUE)
+        target_w = max(MOD_VALUE, (int(width) // MOD_VALUE) * MOD_VALUE)
+        
+        num_frames = np.clip(int(round(int(duration_seconds) * FIXED_FPS) + 1), MIN_FRAMES_MODEL, MAX_FRAMES_MODEL)
+        
+        current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
+        
+        print(f"Generating video with: prompt='{prompt}', resolution={target_w}x{target_h}, frames={num_frames}")
+        
+        with torch.inference_mode():
+            nag_output_frames_list = pipe(
+                prompt=prompt,
+                nag_negative_prompt=nag_negative_prompt,
+                nag_scale=nag_scale,
+                nag_tau=3.5,
+                nag_alpha=0.5,
+                height=target_h, width=target_w, num_frames=num_frames,
+                guidance_scale=0.,
+                num_inference_steps=int(steps),
+                generator=torch.Generator(device="cuda").manual_seed(current_seed)
+            ).frames[0]
+        
+        # Save initial video without audio
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpfile:
+            temp_video_path = tmpfile.name
+        export_to_video(nag_output_frames_list, temp_video_path, fps=FIXED_FPS)
+        print(f"Video saved to: {temp_video_path}")
+        
+        # Add audio if enabled
+        if enable_audio:
+            try:
+                print("Adding audio to video...")
+                final_video_path = add_audio_to_video(
+                    temp_video_path, 
+                    prompt,  # Use the same prompt for audio generation
+                    audio_negative_prompt,
+                    audio_steps,
+                    audio_cfg_strength,
+                    duration_seconds
+                )
+                # Clean up temp video
+                if os.path.exists(temp_video_path) and final_video_path != temp_video_path:
+                    os.remove(temp_video_path)
+                print(f"Final video with audio: {final_video_path}")
+            except Exception as e:
+                log.error(f"Audio generation failed: {e}")
+                final_video_path = temp_video_path
+        else:
             final_video_path = temp_video_path
-    else:
-        final_video_path = temp_video_path
-    
-    return final_video_path, current_seed
+        
+        return final_video_path, current_seed
+    except Exception as e:
+        print(f"Error in video generation: {e}")
+        return None, current_seed
 
 # Example generation function
 def generate_with_example(prompt, nag_negative_prompt, nag_scale):
@@ -224,11 +254,11 @@ def generate_with_example(prompt, nag_negative_prompt, nag_scale):
 # Examples with audio descriptions
 examples = [
     ["Midnight highway outside a neon-lit city. A black 1973 Porsche 911 Carrera RS speeds at 120 km/h. Inside, a stylish singer-guitarist sings while driving, vintage sunburst guitar on the passenger seat. Sodium streetlights streak over the hood; RGB panels shift magenta to blue on the driver. Camera: drone dive, Russian-arm low wheel shot, interior gimbal, FPV barrel roll, overhead spiral. Neo-noir palette, rain-slick asphalt reflections, roaring flat-six engine blended with live guitar.", DEFAULT_NAG_NEGATIVE_PROMPT, 11],
-    ["Arena rock concert packed with 20 000 fans. A flamboyant lead guitarist in leather jacket and mirrored aviators shreds a cherry-red Flying V on a thrust stage. Pyro flames shoot up on every downbeat, CO₂ jets burst behind. Moving-head spotlights swirl teal and amber, follow-spots rim-light the guitarist’s hair. Steadicam 360-orbit, crane shot rising over crowd, ultra-slow-motion pick attack at 1 000 fps. Film-grain teal-orange grade, thunderous crowd roar mixes with screaming guitar solo.", DEFAULT_NAG_NEGATIVE_PROMPT, 11],
+    ["Arena rock concert packed with 20 000 fans. A flamboyant lead guitarist in leather jacket and mirrored aviators shreds a cherry-red Flying V on a thrust stage. Pyro flames shoot up on every downbeat, CO₂ jets burst behind. Moving-head spotlights swirl teal and amber, follow-spots rim-light the guitarist's hair. Steadicam 360-orbit, crane shot rising over crowd, ultra-slow-motion pick attack at 1 000 fps. Film-grain teal-orange grade, thunderous crowd roar mixes with screaming guitar solo.", DEFAULT_NAG_NEGATIVE_PROMPT, 11],
     ["Golden-hour countryside road winding through rolling wheat fields. A man and woman ride a vintage café-racer motorcycle, hair and scarf fluttering in the warm breeze. Drone chase shot reveals endless patchwork farmland; low slider along rear wheel captures dust trail. Sun-flare back-lights the riders, lens blooms on highlights. Soft acoustic rock underscore; engine rumble mixed at –8 dB. Warm pastel color grade, gentle film-grain for nostalgic vibe.", DEFAULT_NAG_NEGATIVE_PROMPT, 11],
 ]
 
-# CSS styling
+# CSS styling - Fixed container structure
 css = """
 .container {
     max-width: 1400px;
@@ -309,184 +339,181 @@ css = """
 }
 """
 
-# Gradio interface
+# Gradio interface - Fixed structure
 with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
-    with gr.Column(elem_classes="container"):
-        gr.HTML("""
+    gr.HTML("""
+        <div class="container">
             <h1 class="main-title">🎬 VEO3 Free</h1>
             <p class="subtitle">Wan2.1-T2V-14B + Fast 4-step with NAG + Automatic Audio Generation</p>
-        """)
-        
+        </div>
+    """)
+    
+    gr.HTML("""
+        <div class='container' style='display:flex; justify-content:center; gap:12px;'>
+            <a href="https://huggingface.co/spaces/openfree/Best-AI" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=OpenFree&message=BEST%20AI%20Services&color=%230000ff&labelColor=%23000080&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="OpenFree badge">
+            </a>
 
-        gr.HTML(
-            """
-            <div class='container' style='display:flex; justify-content:center; gap:12px;'>
-                <a href="https://huggingface.co/spaces/openfree/Best-AI" target="_blank">
-                    <img src="https://img.shields.io/static/v1?label=OpenFree&message=BEST%20AI%20Services&color=%230000ff&labelColor=%23000080&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="OpenFree badge">
-                </a>
+            <a href="https://discord.gg/openfreeai" target="_blank">
+                <img src="https://img.shields.io/static/v1?label=Discord&message=Openfree%20AI&color=%230000ff&labelColor=%23800080&logo=discord&logoColor=white&style=for-the-badge" alt="Discord badge">
+            </a>
+        </div>
+    """)
     
-                <a href="https://discord.gg/openfreeai" target="_blank">
-                    <img src="https://img.shields.io/static/v1?label=Discord&message=Openfree%20AI&color=%230000ff&labelColor=%23800080&logo=discord&logoColor=white&style=for-the-badge" alt="Discord badge">
-                </a>
-            </div>
-                """
-        )
-    
-        
-        with gr.Row():
-            with gr.Column(scale=1):
-                with gr.Group(elem_classes="prompt-container"):
-                    prompt = gr.Textbox(
-                        label="✨ Video Prompt (also used for audio generation)",
-                        placeholder="Describe your video scene in detail...",
-                        lines=3,
-                        elem_classes="prompt-input"
+    with gr.Row():
+        with gr.Column(scale=1):
+            with gr.Group(elem_classes="prompt-container"):
+                prompt = gr.Textbox(
+                    label="✨ Video Prompt (also used for audio generation)",
+                    placeholder="Describe your video scene in detail...",
+                    lines=3,
+                    elem_classes="prompt-input"
+                )
+                
+                with gr.Accordion("🎨 Advanced Video Settings", open=False):
+                    nag_negative_prompt = gr.Textbox(
+                        label="Video Negative Prompt",
+                        value=DEFAULT_NAG_NEGATIVE_PROMPT,
+                        lines=2,
                     )
-                    
-                    with gr.Accordion("🎨 Advanced Video Settings", open=False):
-                        nag_negative_prompt = gr.Textbox(
-                            label="Video Negative Prompt",
-                            value=DEFAULT_NAG_NEGATIVE_PROMPT,
-                            lines=2,
-                        )
-                        nag_scale = gr.Slider(
-                            label="NAG Scale",
-                            minimum=1.0,
-                            maximum=20.0,
-                            step=0.25,
-                            value=11.0,
-                            info="Higher values = stronger guidance"
-                        )
+                    nag_scale = gr.Slider(
+                        label="NAG Scale",
+                        minimum=1.0,
+                        maximum=20.0,
+                        step=0.25,
+                        value=11.0,
+                        info="Higher values = stronger guidance"
+                    )
+            
+            with gr.Group(elem_classes="settings-panel"):
+                gr.Markdown("### ⚙️ Video Settings")
                 
-                with gr.Group(elem_classes="settings-panel"):
-                    gr.Markdown("### ⚙️ Video Settings")
-                    
-                    with gr.Row():
-                        duration_seconds_input = gr.Slider(
-                            minimum=1,
-                            maximum=8,
-                            step=1,
-                            value=DEFAULT_DURATION_SECONDS,
-                            label="📱 Duration (seconds)",
-                            elem_classes="slider-container"
-                        )
-                        steps_slider = gr.Slider(
-                            minimum=1,
-                            maximum=8,
-                            step=1,
-                            value=DEFAULT_STEPS,
-                            label="🔄 Inference Steps",
-                            elem_classes="slider-container"
-                        )
-                    
-                    with gr.Row():
-                        height_input = gr.Slider(
-                            minimum=SLIDER_MIN_H,
-                            maximum=SLIDER_MAX_H,
-                            step=MOD_VALUE,
-                            value=DEFAULT_H_SLIDER_VALUE,
-                            label=f"📐 Height (×{MOD_VALUE})",
-                            elem_classes="slider-container"
-                        )
-                        width_input = gr.Slider(
-                            minimum=SLIDER_MIN_W,
-                            maximum=SLIDER_MAX_W,
-                            step=MOD_VALUE,
-                            value=DEFAULT_W_SLIDER_VALUE,
-                            label=f"📐 Width (×{MOD_VALUE})",
-                            elem_classes="slider-container"
-                        )
-                    
-                    with gr.Row():
-                        seed_input = gr.Slider(
-                            label="🌱 Seed",
-                            minimum=0,
-                            maximum=MAX_SEED,
-                            step=1,
-                            value=DEFAULT_SEED,
-                            interactive=True
-                        )
-                        randomize_seed_checkbox = gr.Checkbox(
-                            label="🎲 Random Seed",
-                            value=True,
-                            interactive=True
-                        )
+                with gr.Row():
+                    duration_seconds_input = gr.Slider(
+                        minimum=1,
+                        maximum=8,
+                        step=1,
+                        value=DEFAULT_DURATION_SECONDS,
+                        label="📱 Duration (seconds)",
+                        elem_classes="slider-container"
+                    )
+                    steps_slider = gr.Slider(
+                        minimum=1,
+                        maximum=8,
+                        step=1,
+                        value=DEFAULT_STEPS,
+                        label="🔄 Inference Steps",
+                        elem_classes="slider-container"
+                    )
                 
-                with gr.Group(elem_classes="audio-settings"):
-                    gr.Markdown("### 🎵 Audio Generation Settings")
-                    
-                    enable_audio = gr.Checkbox(
-                        label="🔊 Enable Automatic Audio Generation",
+                with gr.Row():
+                    height_input = gr.Slider(
+                        minimum=SLIDER_MIN_H,
+                        maximum=SLIDER_MAX_H,
+                        step=MOD_VALUE,
+                        value=DEFAULT_H_SLIDER_VALUE,
+                        label=f"📐 Height (×{MOD_VALUE})",
+                        elem_classes="slider-container"
+                    )
+                    width_input = gr.Slider(
+                        minimum=SLIDER_MIN_W,
+                        maximum=SLIDER_MAX_W,
+                        step=MOD_VALUE,
+                        value=DEFAULT_W_SLIDER_VALUE,
+                        label=f"📐 Width (×{MOD_VALUE})",
+                        elem_classes="slider-container"
+                    )
+                
+                with gr.Row():
+                    seed_input = gr.Slider(
+                        label="🌱 Seed",
+                        minimum=0,
+                        maximum=MAX_SEED,
+                        step=1,
+                        value=DEFAULT_SEED,
+                        interactive=True
+                    )
+                    randomize_seed_checkbox = gr.Checkbox(
+                        label="🎲 Random Seed",
                         value=True,
                         interactive=True
                     )
-                    
-                    with gr.Column(visible=True) as audio_settings_group:
-                        audio_negative_prompt = gr.Textbox(
-                            label="Audio Negative Prompt",
-                            value=DEFAULT_AUDIO_NEGATIVE_PROMPT,
-                            placeholder="Elements to avoid in audio (e.g., music, speech)",
-                        )
-                        
-                        with gr.Row():
-                            audio_steps = gr.Slider(
-                                minimum=10,
-                                maximum=50,
-                                step=5,
-                                value=25,
-                                label="🎚️ Audio Steps",
-                                info="More steps = better quality"
-                            )
-                            audio_cfg_strength = gr.Slider(
-                                minimum=1.0,
-                                maximum=10.0,
-                                step=0.5,
-                                value=4.5,
-                                label="🎛️ Audio Guidance",
-                                info="Strength of prompt guidance"
-                            )
-                    
-                    # Toggle audio settings visibility
-                    enable_audio.change(
-                        fn=lambda x: gr.update(visible=x),
-                        inputs=[enable_audio],
-                        outputs=[audio_settings_group]
-                    )
+            
+            with gr.Group(elem_classes="audio-settings"):
+                gr.Markdown("### 🎵 Audio Generation Settings")
                 
-                generate_button = gr.Button(
-                    "🎬 Generate Video with Audio",
-                    variant="primary",
-                    elem_classes="generate-btn"
+                enable_audio = gr.Checkbox(
+                    label="🔊 Enable Automatic Audio Generation",
+                    value=True,
+                    interactive=True
+                )
+                
+                with gr.Column(visible=True) as audio_settings_group:
+                    audio_negative_prompt = gr.Textbox(
+                        label="Audio Negative Prompt",
+                        value=DEFAULT_AUDIO_NEGATIVE_PROMPT,
+                        placeholder="Elements to avoid in audio (e.g., music, speech)",
+                    )
+                    
+                    with gr.Row():
+                        audio_steps = gr.Slider(
+                            minimum=10,
+                            maximum=50,
+                            step=5,
+                            value=25,
+                            label="🎚️ Audio Steps",
+                            info="More steps = better quality"
+                        )
+                        audio_cfg_strength = gr.Slider(
+                            minimum=1.0,
+                            maximum=10.0,
+                            step=0.5,
+                            value=4.5,
+                            label="🎛️ Audio Guidance",
+                            info="Strength of prompt guidance"
+                        )
+                
+                # Toggle audio settings visibility
+                enable_audio.change(
+                    fn=lambda x: gr.update(visible=x),
+                    inputs=[enable_audio],
+                    outputs=[audio_settings_group]
                 )
             
-            with gr.Column(scale=1):
-                video_output = gr.Video(
-                    label="Generated Video with Audio",
-                    autoplay=True,
-                    interactive=False,
-                    elem_classes="video-output"
-                )
-                
-                gr.HTML("""
-                    <div style="text-align: center; margin-top: 20px; color: #6b7280;">
-                        <p>💡 Tip: The same prompt is used for both video and audio generation!</p>
-                        <p>🎧 Audio is automatically matched to the visual content</p>
-                    </div>
-                """)
+            generate_button = gr.Button(
+                "🎬 Generate Video with Audio",
+                variant="primary",
+                elem_classes="generate-btn"
+            )
         
-        gr.Markdown("### 🎯 Example Prompts")
-        gr.Examples(
-            examples=examples,
-            fn=generate_with_example,
-            inputs=[prompt, nag_negative_prompt, nag_scale],
-            outputs=[
-                video_output,
-                height_input, width_input, duration_seconds_input,
-                steps_slider, seed_input,
-                enable_audio, audio_negative_prompt, audio_steps, audio_cfg_strength
-            ],
-            cache_examples="lazy"
-        )
+        with gr.Column(scale=1):
+            video_output = gr.Video(
+                label="Generated Video with Audio",
+                autoplay=True,
+                interactive=False,
+                elem_classes="video-output"
+            )
+            
+            gr.HTML("""
+                <div style="text-align: center; margin-top: 20px; color: #6b7280;">
+                    <p>💡 Tip: The same prompt is used for both video and audio generation!</p>
+                    <p>🎧 Audio is automatically matched to the visual content</p>
+                </div>
+            """)
+    
+    gr.Markdown("### 🎯 Example Prompts")
+    gr.Examples(
+        examples=examples,
+        fn=generate_with_example,
+        inputs=[prompt, nag_negative_prompt, nag_scale],
+        outputs=[
+            video_output,
+            height_input, width_input, duration_seconds_input,
+            steps_slider, seed_input,
+            enable_audio, audio_negative_prompt, audio_steps, audio_cfg_strength
+        ],
+        cache_examples=False  # Changed from "lazy" to False
+    )
     
     # Connect UI elements
     ui_inputs = [
