@@ -234,22 +234,24 @@ def generate_video_with_audio(
         print(f"Error in video generation: {e}")
         return None, current_seed
 
-# Example generation function
-def generate_with_example(prompt, nag_negative_prompt, nag_scale):
-    video_path, seed = generate_video_with_audio(
-        prompt=prompt,
-        nag_negative_prompt=nag_negative_prompt, nag_scale=nag_scale,
-        height=DEFAULT_H_SLIDER_VALUE, width=DEFAULT_W_SLIDER_VALUE, 
-        duration_seconds=DEFAULT_DURATION_SECONDS,
-        steps=DEFAULT_STEPS,
-        seed=DEFAULT_SEED, randomize_seed=False,
-        enable_audio=True, audio_negative_prompt=DEFAULT_AUDIO_NEGATIVE_PROMPT,
-        audio_steps=25, audio_cfg_strength=4.5,
+# Example generation function - simplified
+def set_example(prompt, nag_negative_prompt, nag_scale):
+    """Set example values in the UI without triggering generation"""
+    return (
+        prompt,
+        nag_negative_prompt,
+        nag_scale,
+        DEFAULT_H_SLIDER_VALUE,
+        DEFAULT_W_SLIDER_VALUE,
+        DEFAULT_DURATION_SECONDS,
+        DEFAULT_STEPS,
+        DEFAULT_SEED,
+        True,  # randomize_seed
+        True,  # enable_audio
+        DEFAULT_AUDIO_NEGATIVE_PROMPT,
+        25,    # audio_steps
+        4.5    # audio_cfg_strength
     )
-    return video_path, \
-        DEFAULT_H_SLIDER_VALUE, DEFAULT_W_SLIDER_VALUE, \
-        DEFAULT_DURATION_SECONDS, DEFAULT_STEPS, seed, \
-        True, DEFAULT_AUDIO_NEGATIVE_PROMPT, 25, 4.5
 
 # Examples with audio descriptions
 examples = [
@@ -258,13 +260,22 @@ examples = [
     ["Golden-hour countryside road winding through rolling wheat fields. A man and woman ride a vintage café-racer motorcycle, hair and scarf fluttering in the warm breeze. Drone chase shot reveals endless patchwork farmland; low slider along rear wheel captures dust trail. Sun-flare back-lights the riders, lens blooms on highlights. Soft acoustic rock underscore; engine rumble mixed at –8 dB. Warm pastel color grade, gentle film-grain for nostalgic vibe.", DEFAULT_NAG_NEGATIVE_PROMPT, 11],
 ]
 
-# CSS styling - Fixed container structure
+# CSS styling - Fixed for better layout
 css = """
+/* Global container settings */
+.gradio-container {
+    max-width: 100% !important;
+    padding: 20px !important;
+}
+
+/* Main container */
 .container {
-    max-width: 1400px;
-    margin: auto;
+    max-width: 1600px;
+    margin: 0 auto;
     padding: 20px;
 }
+
+/* Title styling */
 .main-title {
     text-align: center;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -274,11 +285,14 @@ css = """
     font-weight: bold;
     margin-bottom: 10px;
 }
+
 .subtitle {
     text-align: center;
     color: #6b7280;
     margin-bottom: 30px;
 }
+
+/* Left column styling */
 .prompt-container {
     background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
     border-radius: 15px;
@@ -286,6 +300,7 @@ css = """
     margin-bottom: 20px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
+
 .generate-btn {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
@@ -299,23 +314,40 @@ css = """
     width: 100%;
     margin-top: 20px;
 }
+
 .generate-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
 }
+
+/* Right column - video output */
 .video-output {
     border-radius: 15px;
     overflow: hidden;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
     background: #1a1a1a;
     padding: 10px;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 400px;
 }
+
+/* Ensure video container is responsive */
+.video-output video {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 600px;
+    object-fit: contain;
+}
+
+/* Settings panels */
 .settings-panel {
     background: #f9fafb;
     border-radius: 15px;
     padding: 20px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
+
 .slider-container {
     background: white;
     padding: 15px;
@@ -323,19 +355,24 @@ css = """
     margin-bottom: 15px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
-.info-box {
-    background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
-    border-radius: 10px;
-    padding: 15px;
-    margin: 10px 0;
-    border-left: 4px solid #667eea;
-}
+
 .audio-settings {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border-radius: 10px;
     padding: 15px;
     margin-top: 10px;
     border-left: 4px solid #f59e0b;
+}
+
+/* Responsive grid layout */
+@media (max-width: 768px) {
+    .gradio-container {
+        padding: 10px !important;
+    }
+    
+    .main-title {
+        font-size: 1.8em;
+    }
 }
 """
 
@@ -349,7 +386,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
     """)
     
     gr.HTML("""
-        <div class='container' style='display:flex; justify-content:center; gap:12px;'>
+        <div class='container' style='display:flex; justify-content:center; gap:12px; margin-bottom: 20px;'>
             <a href="https://huggingface.co/spaces/openfree/Best-AI" target="_blank">
                 <img src="https://img.shields.io/static/v1?label=OpenFree&message=BEST%20AI%20Services&color=%230000ff&labelColor=%23000080&logo=huggingface&logoColor=%23ffa500&style=for-the-badge" alt="OpenFree badge">
             </a>
@@ -360,8 +397,8 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
         </div>
     """)
     
-    with gr.Row():
-        with gr.Column(scale=1):
+    with gr.Row(equal_height=True):
+        with gr.Column(scale=5):
             with gr.Group(elem_classes="prompt-container"):
                 prompt = gr.Textbox(
                     label="✨ Video Prompt (also used for audio generation)",
@@ -486,12 +523,13 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                 elem_classes="generate-btn"
             )
         
-        with gr.Column(scale=1):
+        with gr.Column(scale=5):
             video_output = gr.Video(
                 label="Generated Video with Audio",
                 autoplay=True,
                 interactive=False,
-                elem_classes="video-output"
+                elem_classes="video-output",
+                height=600
             )
             
             gr.HTML("""
@@ -501,18 +539,15 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
                 </div>
             """)
     
-    gr.Markdown("### 🎯 Example Prompts")
+    # Examples section moved outside of columns
+    with gr.Row():
+        gr.Markdown("### 🎯 Example Prompts")
+    
     gr.Examples(
         examples=examples,
-        fn=generate_with_example,
         inputs=[prompt, nag_negative_prompt, nag_scale],
-        outputs=[
-            video_output,
-            height_input, width_input, duration_seconds_input,
-            steps_slider, seed_input,
-            enable_audio, audio_negative_prompt, audio_steps, audio_cfg_strength
-        ],
-        cache_examples=False  # Changed from "lazy" to False
+        outputs=None,  # Don't connect outputs to avoid index issues
+        cache_examples=False
     )
     
     # Connect UI elements
