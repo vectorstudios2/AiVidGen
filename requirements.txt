@@ -8,7 +8,7 @@ ftfy
 imageio-ffmpeg
 opencv-python
 
-torch == 2.4.0
+torch >= 2.5, <2.9
 torchvision
 torchaudio
 python-dotenv
